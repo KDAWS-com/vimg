@@ -1,4 +1,4 @@
-package bimg
+package vimg
 
 /*
 #cgo pkg-config: vips
@@ -24,53 +24,35 @@ type ImageMetadata struct {
 	Size        ImageSize
 }
 
-// Size returns the image size by width and height pixels.
-func Size(buf []byte) (ImageSize, error) {
-	metadata, err := Metadata(buf)
-	if err != nil {
-		return ImageSize{}, err
-	}
-
-	return ImageSize{
-		Width:  int(metadata.Size.Width),
-		Height: int(metadata.Size.Height),
-	}, nil
-}
-
-// ColourspaceIsSupported checks if the image colourspace is supported by libvips.
-func ColourspaceIsSupported(buf []byte) (bool, error) {
-	return vipsColourspaceIsSupportedBuffer(buf)
-}
-
-// ImageInterpretation returns the image interpretation type.
-// See: https://jcupitt.github.io/libvips/API/current/VipsImage.html#VipsInterpretation
-func ImageInterpretation(buf []byte) (Interpretation, error) {
-	return vipsInterpretationBuffer(buf)
-}
-
 // Metadata returns the image metadata (size, type, alpha channel, profile, EXIF orientation...).
-func Metadata(buf []byte) (ImageMetadata, error) {
-	defer C.vips_thread_shutdown()
-
-	image, imageType, err := vipsRead(buf)
-	if err != nil {
-		return ImageMetadata{}, err
-	}
-	defer C.g_object_unref(C.gpointer(image))
+func (img *VipsImage) Metadata() (ImageMetadata, error) {
 
 	size := ImageSize{
-		Width:  int(image.Xsize),
-		Height: int(image.Ysize),
+		Width:  int(img.Image.Xsize),
+		Height: int(img.Image.Ysize),
 	}
 
+	o, err := img.vipsExifOrientation()
+	if err != nil { return ImageMetadata{}, err }
+
+	a, err := img.vipsHasAlpha()
+	if err != nil { return ImageMetadata{}, err }
+
+	p, err := img.hasProfile()
+	if err != nil { return ImageMetadata{}, err }
+
+	s, err := img.vipsSpace()
+	if err != nil { return ImageMetadata{}, err }
+
+	b := img.Buffer
 	metadata := ImageMetadata{
 		Size:        size,
-		Channels:    int(image.Bands),
-		Orientation: vipsExifOrientation(image),
-		Alpha:       vipsHasAlpha(image),
-		Profile:     vipsHasProfile(image),
-		Space:       vipsSpace(image),
-		Type:        ImageTypeName(imageType),
+		Channels:    int(img.Image.Bands),
+		Orientation: o,
+		Alpha:       a,
+		Profile:     p,
+		Space:       s,
+		Type:        ImageTypeName(vipsImageType(b)),
 	}
 
 	return metadata, nil

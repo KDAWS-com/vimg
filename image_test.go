@@ -1,4 +1,4 @@
-package bimg
+package vimg
 
 import (
 	"fmt"

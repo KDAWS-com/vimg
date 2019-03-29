@@ -1,4 +1,4 @@
-package bimg
+package vimg
 
 // Version represents the current package semantic version.
 const Version = "1.0.18"

@@ -1,20 +1,17 @@
-# bimg [![Build Status](https://travis-ci.org/h2non/bimg.svg)](https://travis-ci.org/h2non/bimg) [![GoDoc](https://godoc.org/github.com/h2non/bimg?status.svg)](https://godoc.org/github.com/h2non/bimg) [![Go Report Card](http://goreportcard.com/badge/h2non/bimg)](http://goreportcard.com/report/h2non/bimg) [![Coverage Status](https://coveralls.io/repos/github/h2non/bimg/badge.svg?branch=master)](https://coveralls.io/github/h2non/bimg?branch=master) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+# vimg ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-Small [Go](http://golang.org) package for fast high-level image processing using [libvips](https://github.com/jcupitt/libvips) via C bindings, providing a simple, elegant and fluent [programmatic API](#examples).
+Small [Go](http://golang.org) package for fast high-level image processing using [libvips](https://github.com/jcupitt/libvips) via C bindings, providing a simple method based API.
 
-bimg was designed to be a small and efficient library supporting a common set of [image operations](#supported-image-operations) such as crop, resize, rotate, zoom or watermark. It can read JPEG, PNG, WEBP natively, and optionally TIFF, PDF, GIF and SVG formats if `libvips@8.3+` is compiled with proper library bindings.
+vimg is a fork of [vimg](https://github.com/h2non/vimg) the fluent interface is partially done away with, as VipsImage.Process() doesn't return the buffer as it's an expensive operation.  It will be added back in via explicit calls to image.GetBuffer() at some point - but it does make it much more expensive to use the fluent interface once that is done.  
 
-bimg is able to output images as JPEG, PNG and WEBP formats, including transparent conversion across them.
+vimg is efficient.  In tests a fully instrumented (with Prometheus and pprof) HTTP server used just 170MB of RAM when processing a 1950x1300 pixel JPEG (409KB) to a 130x86 pixel WebP (3KB) at a concurrency level of 10, over 50,000 requests.
+ 
+vimg supports the following [image operations](#supported-image-operations)
 
-bimg uses internally libvips, a powerful library written in C for image processing which requires a [low memory footprint](https://github.com/jcupitt/libvips/wiki/Speed_and_Memory_Use)
+vimg is able to output images as JPEG, PNG, WEBP and TIFF formats, including transparent conversion across them.
+
+vimg uses libvips, a powerful library written in C for image processing which requires a [low memory footprint](https://github.com/jcupitt/libvips/wiki/Speed_and_Memory_Use)
 and it's typically 4x faster than using the quickest ImageMagick and GraphicsMagick settings or Go native `image` package, and in some cases it's even 8x faster processing JPEG images.
-
-If you're looking for an HTTP based image processing solution, see [imaginary](https://github.com/h2non/imaginary).
-
-bimg was heavily inspired in [sharp](https://github.com/lovell/sharp), its homologous package built for [node.js](http://nodejs.org). bimg is used in production environments processing thousands of images per day.
-
-**v1 notice**: `bimg` introduces some minor breaking changes in `v1` release.
-If you're using `gopkg.in`, you can still rely in the `v0` without worrying about API breaking changes.
 
 ## Contents
 
@@ -43,6 +40,8 @@ If you're using `gopkg.in`, you can still rely in the `v0` without worrying abou
 - Watermark (using text or image)
 - Gaussian blur effect
 - Custom output color space (RGB, grayscale...)
+- ICC Color Profile conversion
+- ICC Color Profile extraction
 - Format conversion (with additional quality/compression settings)
 - EXIF metadata (size, alpha channel, profile, orientation...)
 - Trim (libvips 8.6+)
@@ -58,22 +57,22 @@ If you're using `gopkg.in`, you can still rely in the `v0` without worrying abou
 ## Installation
 
 ```bash
-go get -u gopkg.in/h2non/bimg.v1
+go get -u github.com/karlaustin/vimg
 ```
 
 ### libvips
 
 Run the following script as `sudo` (supports OSX, Debian/Ubuntu, Redhat, Fedora, Amazon Linux):
 ```bash
-curl -s https://raw.githubusercontent.com/h2non/bimg/master/preinstall.sh | sudo bash -
+curl -s https://raw.githubusercontent.com/h2non/vimg/master/preinstall.sh | sudo bash -
 ```
 
 If you wanna take the advantage of [OpenSlide](http://openslide.org/), simply add `--with-openslide` to enable it:
 ```bash
-curl -s https://raw.githubusercontent.com/h2non/bimg/master/preinstall.sh | sudo bash -s --with-openslide
+curl -s https://raw.githubusercontent.com/h2non/vimg/master/preinstall.sh | sudo bash -s --with-openslide
 ```
 
-The [install script](https://github.com/h2non/bimg/blob/master/preinstall.sh) requires `curl` and `pkg-config`.
+The [install script](https://github.com/karlaustin/vimg/blob/master/preinstall.sh) requires `curl` and `pkg-config`.
 
 ## Performance
 
@@ -84,90 +83,82 @@ Here you can see some performance test comparisons for multiple scenarios:
 
 ## Benchmark
 
-Tested using Go 1.5.1 and libvips-7.42.3 in OSX i7 2.7Ghz
-```
-BenchmarkRotateJpeg-8     	      20	  64686945 ns/op
-BenchmarkResizeLargeJpeg-8	      20	  63390416 ns/op
-BenchmarkResizePng-8      	     100	  18147294 ns/op
-BenchmarkResizeWebP-8     	     100	  20836741 ns/op
-BenchmarkConvertToJpeg-8  	     100	  12831812 ns/op
-BenchmarkConvertToPng-8   	      10	 128901422 ns/op
-BenchmarkConvertToWebp-8  	      10	 204027990 ns/op
-BenchmarkCropJpeg-8       	      30	  59068572 ns/op
-BenchmarkCropPng-8        	      10	 117303259 ns/op
-BenchmarkCropWebP-8       	      10	 107060659 ns/op
-BenchmarkExtractJpeg-8    	      50	  30708919 ns/op
-BenchmarkExtractPng-8     	    3000	    595546 ns/op
-BenchmarkExtractWebp-8    	    3000	    386379 ns/op
-BenchmarkZoomJpeg-8       	      10	 160005424 ns/op
-BenchmarkZoomPng-8        	      30	  44561047 ns/op
-BenchmarkZoomWebp-8       	      10	 126732678 ns/op
-BenchmarkWatermarkJpeg-8  	      20	  79006133 ns/op
-BenchmarkWatermarPng-8    	     200	   8197291 ns/op
-BenchmarkWatermarWebp-8   	      30	  49360369 ns/op
-```
-
 ## Examples
 
 ```go
 import (
   "fmt"
   "os"
-  "gopkg.in/h2non/bimg.v1"
+  "github.com/karlaustin/vimg"
 )
 ```
 
 #### Resize
 
 ```go
-buffer, err := bimg.Read("image.jpg")
+buffer, err := vimg.Read("image.jpg")
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-newImage, err := bimg.NewImage(buffer).Resize(800, 600)
+newImage, err := vimg.NewImage(buffer, Options{})
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-size, err := bimg.NewImage(newImage).Size()
+err := newImage.Resize(800, 600)
+if err != nil {
+  fmt.Fprintln(os.Stderr, err)
+}
+
+size, err := newImage.Size()
 if size.Width == 800 && size.Height == 600 {
   fmt.Println("The image size is valid")
 }
 
-bimg.Write("new.jpg", newImage)
+imageBuffer = newImage.Save()
+vimg.Write("new.jpg", imageBuffer)
 ```
 
 #### Rotate
 
 ```go
-buffer, err := bimg.Read("image.jpg")
+buffer, err := vimg.Read("image.jpg")
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-newImage, err := bimg.NewImage(buffer).Rotate(90)
+newImage, err := vimg.NewImage(buffer, Options{})
+if err != nil {
+  fmt.Fprintln(os.Stderr, err)
+}
+err := newImage.Rotate(90)
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-bimg.Write("new.jpg", newImage)
+imageBuffer = newImage.Save()
+vimg.Write("new.jpg", imageBuffer)
 ```
 
 #### Convert
 
 ```go
-buffer, err := bimg.Read("image.jpg")
+buffer, err := vimg.Read("image.jpg")
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-newImage, err := bimg.NewImage(buffer).Convert(bimg.PNG)
+newImage, err := vimg.NewImage(buffer, Options{})
+if err != nil {
+  fmt.Fprintln(os.Stderr, err)
+}
+err := newImage.Convert(vimg.PNG)
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-if bimg.NewImage(newImage).Type() == "png" {
+if newImage.Type() == "png" {
   fmt.Fprintln(os.Stderr, "The image was converted into png")
 }
 ```
@@ -177,47 +168,33 @@ if bimg.NewImage(newImage).Type() == "png" {
 Force resize operation without perserving the aspect ratio:
 
 ```go
-buffer, err := bimg.Read("image.jpg")
+buffer, err := vimg.Read("image.jpg")
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-newImage, err := bimg.NewImage(buffer).ForceResize(1000, 500)
+newImage, err := vimg.NewImage(buffer, Options{})
+if err != nil {
+  fmt.Fprintln(os.Stderr, err)
+}
+err := newImage.ForceResize(1000, 500)
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-size := bimg.Size(newImage)
+size, err := newImage.Size()
 if size.Width != 1000 || size.Height != 500 {
-  fmt.Fprintln(os.Stderr, "Incorrect image size")
-}
-```
-
-#### Custom colour space (black & white)
-
-```go
-buffer, err := bimg.Read("image.jpg")
-if err != nil {
-  fmt.Fprintln(os.Stderr, err)
+  fmt.Println("Incorrect image size")
 }
 
-newImage, err := bimg.NewImage(buffer).Colourspace(bimg.INTERPRETATION_B_W)
-if err != nil {
-  fmt.Fprintln(os.Stderr, err)
-}
-
-colourSpace, _ := bimg.ImageInterpretation(newImage)
-if colourSpace != bimg.INTERPRETATION_B_W {
-  fmt.Fprintln(os.Stderr, "Invalid colour space")
-}
 ```
 
 #### Custom options
 
-See [Options](https://godoc.org/github.com/h2non/bimg#Options) struct to discover all the available fields
+See [Options](https://github.com/karlaustin/vimg#Options) struct to discover all the available fields
 
 ```go
-options := bimg.Options{
+options := vimg.Options{
   Width:        800,
   Height:       600,
   Crop:         true,
@@ -226,76 +203,62 @@ options := bimg.Options{
   Interlace:    true,
 }
 
-buffer, err := bimg.Read("image.jpg")
+buffer, err := vimg.Read("image.jpg")
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-newImage, err := bimg.NewImage(buffer).Process(options)
+newImage, err := vimg.NewImage(buffer, options)
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-bimg.Write("new.jpg", newImage)
+err := newImage.Process()
+if err != nil {
+  fmt.Fprintln(os.Stderr, err)
+}
+
+imageBuffer = newImage.Save()
+vimg.Write("new.jpg", imageBuffer)
 ```
 
 #### Watermark
 
 ```go
-buffer, err := bimg.Read("image.jpg")
+buffer, err := vimg.Read("image.jpg")
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-watermark := bimg.Watermark{
+watermark := vimg.Watermark{
   Text:       "Chuck Norris (c) 2315",
   Opacity:    0.25,
   Width:      200,
   DPI:        100,
   Margin:     150,
   Font:       "sans bold 12",
-  Background: bimg.Color{255, 255, 255},
+  Background: vimg.Color{255, 255, 255},
 }
 
-newImage, err := bimg.NewImage(buffer).Watermark(watermark)
+newImage, err := vimg.NewImage(buffer, Options())
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-bimg.Write("new.jpg", newImage)
-```
-
-#### Fluent interface
-
-```go
-buffer, err := bimg.Read("image.jpg")
+err := newImage.Watermark(watermark)
 if err != nil {
   fmt.Fprintln(os.Stderr, err)
 }
 
-image := bimg.NewImage(buffer)
-
-// first crop image
-_, err := image.CropByWidth(300)
-if err != nil {
-  fmt.Fprintln(os.Stderr, err)
-}
-
-// then flip it
-newImage, err := image.Flip()
-if err != nil {
-  fmt.Fprintln(os.Stderr, err)
-}
-
-// save the cropped and flipped image
-bimg.Write("new.jpg", newImage)
+imageBuffer = newImage.Save()
+vimg.Write("new.jpg", imageBuffer)
 ```
 
 ## Debugging
 
 Run the process passing the `DEBUG` environment variable
 ```
-DEBUG=bimg ./app
+DEBUG=vimg ./app
 ```
 
 Enable libvips traces (note that a lot of data will be written in stdout):
@@ -318,29 +281,12 @@ Or set the G_DEBUG environment variable:
 export G_DEBUG=fatal-warnings,fatal-criticals
 ```
 
-## API
-
-See [godoc reference](https://godoc.org/github.com/h2non/bimg) for detailed API documentation.
-
 ## Authors
 
-- [Tomás Aparicio](https://github.com/h2non) - Original author and architect.
-- [Kirill Danshin](https://github.com/kirillDanshin) - Maintainer since April 2017.
-
-## Credits
-
-People who recurrently contributed to improve `bimg` in some way.
-
-- [John Cupitt](https://github.com/jcupitt)
-- [Yoan Blanc](https://github.com/greut)
-- [Christophe Eblé](https://github.com/chreble)
-- [Brant Fitzsimmons](https://github.com/bfitzsimmons)
-- [Thomas Meson](https://github.com/zllak)
-
-Thank you!
+- [Karl Austin](https://github.com/karlaustin) - Author of vimg and code changes since March 2019
+- [Tomás Aparicio](https://github.com/h2non) - Original author and architect of [bimg](https://github.com/h2non/bimg).
+- [Kirill Danshin](https://github.com/kirillDanshin) - Maintainer of bimg since April 2017.
 
 ## License
 
-MIT - Tomas Aparicio
-
-[![views](https://sourcegraph.com/api/repos/github.com/h2non/bimg/.counters/views.svg)](https://sourcegraph.com/github.com/h2non/bimg)
+MIT - Karl Asutin, Tomas Aparicio

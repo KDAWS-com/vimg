@@ -105,6 +105,10 @@ vips_affine_interpolator(VipsImage *in, VipsImage **out, double a, double b, dou
 	return vips_affine(in, out, a, b, c, d, "interpolate", interpolator, NULL);
 }
 
+int vips_resize_bridge (VipsImage *in, VipsImage **out, double scale, VipsInterpolate *interpolator) {
+  return vips_resize(in, out, scale, "interpolate", interpolator, NULL);
+}
+
 int
 vips_jpegload_buffer_shrink(void *buf, size_t len, VipsImage **out, int shrink) {
 	return vips_jpegload_buffer(buf, len, out, "shrink", shrink, NULL);
@@ -272,6 +276,15 @@ int
 vips_icc_transform_bridge (VipsImage *in, VipsImage **out, const char *output_icc_profile) {
 	// `output_icc_profile` represents the absolute path to the output ICC profile file
 	return vips_icc_transform(in, out, output_icc_profile, "embedded", TRUE, NULL);
+}
+
+int
+vips_image_get_blob_bridge (VipsImage *in, const void **data, size_t *length, const char *name ) {
+  if (vips_image_get_typeof(in, name) == VIPS_TYPE_BLOB) {
+    return vips_image_get_blob(in, name, data, length);
+  } else{
+  	return -1;
+  }
 }
 
 int

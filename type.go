@@ -1,6 +1,7 @@
-package bimg
+package vimg
 
 import (
+	"encoding/json"
 	"regexp"
 	"sync"
 	"unicode/utf8"
@@ -45,6 +46,67 @@ var ImageTypes = map[ImageType]string{
 	PDF:    "pdf",
 	SVG:    "svg",
 	MAGICK: "magick",
+}
+
+var imageInterpolatorToID = map[string]Interpolator {
+	"bicubic": Bicubic,
+	"bilinear": Bilinear,
+	"nohalo": Nohalo,
+	"nearest": Nearest,
+}
+
+var imageInterpretationToID = map[string]Interpretation {
+	"srgb":			 	InterpretationSRGB,
+	"multiband":	InterpretationMultiband,
+	"bw":					InterpretationBW,
+	"cmyk":				InterpretationCMYK,
+	"rgb":				InterpretationRGB,
+	"rgb16":			InterpretationRGB16,
+	"grey16":			InterpretationGREY16,
+	"scrgb":			InterpretationScRGB,
+	"lab":				InterpretationLAB,
+	"xyz":				InterpretationXYZ,
+}
+
+var imageTypeToID = map[string]ImageType {
+	"webp": WEBP,
+	"jpeg": JPEG,
+	"gif": GIF,
+	"tiff": TIFF,
+	"pdf": PDF,
+	"png": PNG,
+	"svg": SVG,
+	"magick": MAGICK,
+}
+
+func (i *Interpolator) UnmarshalJSON(data []byte) error {
+	var s string
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+	*i = imageInterpolatorToID[s]
+	return nil
+}
+
+func (i *Interpretation) UnmarshalJSON(data []byte) error {
+	var s string
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+	*i = imageInterpretationToID[s]
+	return nil
+}
+
+func (t *ImageType) UnmarshalJSON(data []byte) error {
+	var s string
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+	*t = imageTypeToID[s]
+	return nil
 }
 
 // imageMutex is used to provide thread-safe synchronization
