@@ -7,19 +7,24 @@ package vimg
 import "C"
 
 import (
+	"bytes"
 	"errors"
+	"github.com/karlaustin/refcount"
+	"github.com/prometheus/client_golang/prometheus"
 	"math"
 )
 
 type VipsImage struct {
+	refcount.ReferenceCounter
 	Buffer 		[]byte
 	Image 		*C.VipsImage
 	Type    	ImageType
 	Options		Options
 }
 
-func NewVipsImage(buf []byte, opt Options) (*VipsImage, error) {
-	ret := new(VipsImage)
+func NewVipsImage(buf *bytes.Buffer, opt Options) (*VipsImage, error) {
+	vimgImageBuffer.With(prometheus.Labels{"action":"request", "type":"vips"}).Inc()
+	ret := AquireVipsImage()
 	if err := ret.Load(buf); err != nil {
 		return nil, err
 	}
@@ -32,27 +37,53 @@ var (
 	ErrVipsImageNotValidPointer = errors.New("Image is not a valid pointer to *C.VipsImage")
 )
 
-func (img *VipsImage) Load(buf []byte) error {
-	if len(buf) == 0 {
+func ResetVipsImage(i interface{}) error {
+	img, ok := i.(*VipsImage)
+	if !ok {
+		return errors.New("illegal object sent to ResetVipsImage")
+	}
+	img.Reset()
+	return nil
+}
+
+func AquireVipsImage() *VipsImage {
+	return vipsImagePool.Get().(*VipsImage)
+}
+
+var vipsImagePool = refcount.NewReferenceCountedPool(
+		func(counter refcount.ReferenceCounter) refcount.ReferenceCountable {
+			vimgImageBuffer.With(prometheus.Labels{"action":"new", "type":"vips"}).Inc()
+			vi := new(VipsImage)
+			vi.Buffer = make([]byte, 1024 * 2048)
+			vi.ReferenceCounter = counter
+			return vi
+		}, ResetVipsImage)
+
+func (img *VipsImage) Load(buf *bytes.Buffer) error {
+	if buf.Len() == 0 {
 		return errors.New("Image buffer is empty")
 	}
 
 	var err error
-
 	err = img.vipsRead(buf)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
 
+func (img *VipsImage) Reset() {
+	img.Buffer = nil
+	img.Type = UNKNOWN
+	img.Options = Options{}
+	img.Image = nil
 }
 
 /**
  * All the heavy work happens here, Process() looks at the Options and works out what needs doing to the image
  */
 func (img *VipsImage) Process() error {
-
 	// Make sure defaults are applied sensibly
 	img.applyDefaults()
 
@@ -61,14 +92,18 @@ func (img *VipsImage) Process() error {
 		return errors.New("Unsupported image output type")
 	}
 
-	// Auto rotate image based on EXIF orientation header
-	rotated, err := img.rotateAndFlipImage()
+	/**
+	 * Rotate early, so the output image is the correct size requested
+	 */
+	rotated, err := img.rotateAndFlipImage(true)
 	if err != nil {
 		return err
 	}
 
-	// If the image has been rotated retrieve the buffer
-	if rotated && !img.Options.NoAutoRotate {
+	/**
+	 * If the image has been rotated retrieve the buffer, otherwise the rotation will not manifest
+	 */
+	if rotated {//} && !img.Options.NoAutoRotate {
 		img.Buffer, err = img.getImageBuffer()
 		if err != nil {
 			return err
@@ -123,7 +158,7 @@ func (img *VipsImage) Process() error {
 
 	// Apply effects, if necessary
 	if img.shouldApplyEffects() {
-		 err = img.applyEffects()
+		err = img.applyEffects()
 		if err != nil {
 			return err
 		}
@@ -143,6 +178,12 @@ func (img *VipsImage) Process() error {
 
 	// Flatten image on a background, if necessary
 	err = img.Flatten()
+	if err != nil {
+		return err
+	}
+
+	// Apply Gamma filter, if necessary
+	err = img.applyGamma()
 	if err != nil {
 		return err
 	}
@@ -189,6 +230,7 @@ func (img *VipsImage) Save() error {
 }
 
 func (img *VipsImage) GetICCProfile() ([]byte, error) {
+	vimgOperations.With(prometheus.Labels{"type":"geticc"}).Inc()
 	hasProfile, err := img.hasProfile()
 	if err != nil {
 		return nil, err
@@ -221,14 +263,14 @@ func (img *VipsImage) shouldTransformImage() bool {
 	 * So we can skip the transport for basic resize.
 	*/
 	return o.Force || (o.Width > 0 && o.Width < inWidth) ||
-		(o.Height > 0 && o.Height < inHeight) || o.AreaWidth > 0 || o.AreaHeight > 0 ||
+		(o.Height > 0 && o.Height < inHeight) || o.Extract.Width > 0 || o.Extract.Height > 0 ||
 		(o.Height > 0 && o.Height > inHeight && o.Enlarge) || (o.Width > 0 && o.Width > inWidth && o.Enlarge) ||
 		o.Trim
 }
 
 func (img *VipsImage) shouldApplyEffects() bool {
 	o := &img.Options
-	return o.GaussianBlur.Sigma > 0 || o.GaussianBlur.MinAmpl > 0 || o.Sharpen.Radius > 0 && o.Sharpen.Y2 > 0 || o.Sharpen.Y3 > 0
+	return o.GaussianBlur.Sigma > 0 || o.GaussianBlur.MinAmpl > 0 || o.Sharpen.Sigma > 0 && o.Sharpen.Y2 > 0 || o.Sharpen.Y3 > 0
 }
 
 func (img *VipsImage) transformImage(shrink int, residual float64) error {
@@ -253,9 +295,22 @@ func (img *VipsImage) transformImage(shrink int, residual float64) error {
 		img.Options.Embed = false
 	}
 
-	_, err = img.extractOrEmbedImage(img.Options)
+	i, err := img.extractOrEmbedImage(img.Options)
 	if err != nil {
 		return err
+	}
+	/**
+	 * We've probably ended up with a new image because we've taken part of the old out or otherwise transformed it
+	 * SmartCrop is the anomaly here as it does modify the source image directly.
+	 * TODO: Looking at making smartcrop return the image portion as well
+	 */
+	if i != nil && len(i.Buffer) > 0 {
+//		fmt.Println("New Image Buffer from transform")
+		C.g_object_unref(C.gpointer(img.Image))
+		img.Image = i.Image
+		img.Buffer = i.Buffer
+		// This may go wrong if re unref it to soon?
+		defer i.DecrementReferenceCount()
 	}
 
 	return nil
@@ -271,7 +326,7 @@ func (img *VipsImage) applyEffects() error {
 		}
 	}
 
-	if img.Options.Sharpen.Radius > 0 && img.Options.Sharpen.Y2 > 0 || img.Options.Sharpen.Y3 > 0 {
+	if img.Options.Sharpen.Sigma > 0 && img.Options.Sharpen.Y2 > 0 || img.Options.Sharpen.Y3 > 0 {
 		err = img.vipsSharpen(img.Options.Sharpen)
 		if err != nil {
 			return err
@@ -281,12 +336,15 @@ func (img *VipsImage) applyEffects() error {
 	return nil
 }
 
+/**
+ * TODO: Make crop & embed work with relative numbers
+ */
 func (img *VipsImage) extractOrEmbedImage(o Options) (*VipsImage, error) {
-	var err error
+	var err error = nil
 	inWidth := int(img.Image.Xsize)
 	inHeight := int(img.Image.Ysize)
 
-	var image *VipsImage
+	var image *VipsImage = nil
 
 	switch {
 	case o.Gravity == GravitySmart, o.SmartCrop:
@@ -297,7 +355,7 @@ func (img *VipsImage) extractOrEmbedImage(o Options) (*VipsImage, error) {
 		height := int(math.Min(float64(inHeight), float64(o.Height)))
 		left, top := calculateCrop(inWidth, inHeight, o.Width, o.Height, o.Gravity)
 		left, top = int(math.Max(float64(left), 0)), int(math.Max(float64(top), 0))
-		image, err = img.vipsExtract(left, top, width, height)
+		image, err = img.vipsExtract(float32(left), float32(top), float32(width), float32(height))
 		break
 	case o.Embed:
 		left, top := (o.Width-inWidth)/2, (o.Height-inHeight)/2
@@ -307,45 +365,45 @@ func (img *VipsImage) extractOrEmbedImage(o Options) (*VipsImage, error) {
 	case o.Trim:
 		left, top, width, height, err := img.vipsTrim(o.Background, o.Threshold)
 		if err == nil {
-			image, err = img.vipsExtract(left, top, width, height)
+			image, err = img.vipsExtract(float32(left), float32(top), float32(width), float32(height))
 		}
 		break
-	case o.Top != 0 || o.Left != 0 || o.AreaWidth != 0 || o.AreaHeight != 0:
-		if o.AreaWidth == 0 {
-			o.AreaWidth = o.Width
+	case o.Extract.Top != 0 || o.Extract.Left != 0 || o.Extract.Width != 0 || o.Extract.Height != 0:
+		if o.Extract.Width == 0 {
+			o.Extract.Width = float32(o.Width)
 		}
-		if o.AreaHeight == 0 {
-			o.AreaHeight = o.Height
+		if o.Extract.Height == 0 {
+			o.Extract.Height = float32(o.Height)
 		}
-		if o.AreaWidth == 0 || o.AreaHeight == 0 {
-			return nil, errors.New("Extract area width/height params are required")
+		if o.Extract.Width == 0 || o.Extract.Height == 0 {
+			return nil, errors.New("extract area width/height params are required")
 		}
-		image, err = img.vipsExtract(o.Left, o.Top, o.AreaWidth, o.AreaHeight)
+		image, err = img.vipsExtract(o.Extract.Left, o.Extract.Top, o.Extract.Width, o.Extract.Height)
 		break
 	}
 
 	return image, err
 }
 
-func (img *VipsImage) rotateAndFlipImage() (bool, error) {
+func (img *VipsImage) rotateAndFlipImage(additive bool) (bool, error) {
 	var err error
 	var rotated bool
 
-	if img.Options.NoAutoRotate == false {
-		rotation, flip, err := img.calculateRotationAndFlip()
-		if err != nil { return false, err }
+	rotation, flip, err := img.calculateRotationAndFlip(additive)
+	if err != nil { return false, err }
 
-		if flip {
-			img.Options.Flip = flip
+	if img.Options.NoAutoRotate == false {
+		// Cancel out the EXIF flip if user has requested flip
+		if flip && img.Options.Flip {
+			img.Options.Flip = false
 		}
-		if rotation > 0 && img.Options.Rotate == 0 {
-			img.Options.Rotate = rotation
-		}
+		img.Options.Rotate = rotation
 	}
 
 	if img.Options.Rotate > 0 {
 		rotated = true
-		err = img.vipsRotate(getAngle(img.Options.Rotate))
+		//err = img.vipsRotate(getAngle(img.Options.Rotate))
+		err = img.vipsRotate(img.Options.Rotate)
 	}
 
 	if img.Options.Flip {
@@ -378,11 +436,6 @@ func (img *VipsImage) watermarkWithText() error {
 	}
 	if w.Margin == 0 {
 		w.Margin = w.Width
-	}
-	if w.Opacity == 0 {
-		w.Opacity = 0.25
-	} else if w.Opacity > 1 {
-		w.Opacity = 1
 	}
 
 	var err error
@@ -563,12 +616,17 @@ func calculateCrop(inWidth, inHeight, outWidth, outHeight int, gravity Gravity) 
 	return left, top
 }
 
-func (img *VipsImage) calculateRotationAndFlip() (Angle, bool, error) {
+// calculateRotationAndFlip works out the angles and flips needed to get an image to look "normal" based on EXIF
+// metadata for orientation.
+// If an angle is specified in the image Options then it will use that.
+// If additive is true, it will add the EXIF auto rotation and specified angle together, which is what end users would
+// probably expect to happen.
+func (img *VipsImage) calculateRotationAndFlip(additive bool) (Angle, bool, error) {
 	angle := img.Options.Rotate
 	rotate := D0
 	flip := false
 
-	if angle > 0 {
+	if angle > 0 && !additive {
 		return rotate, flip, nil
 	}
 
@@ -602,6 +660,8 @@ func (img *VipsImage) calculateRotationAndFlip() (Angle, bool, error) {
 		break // flip 8
 	}
 
+	if additive { rotate+= angle }
+
 	return rotate, flip, nil
 }
 
@@ -633,11 +693,23 @@ func (img *VipsImage) calculateResidual() float64 {
 
 	return float64(img.calculateShrink()) / img.ScaleFactor()
 }
-
+/*
 func getAngle(angle Angle) Angle {
 	divisor := angle % 90
 	if divisor != 0 {
 		angle = angle - divisor
 	}
 	return Angle(math.Min(float64(angle), 270))
+}
+*/
+
+func (img *VipsImage) applyGamma() error {
+	var err error
+	if o.Gamma > 0 {
+		err = img.vipsGamma(img.Options.Gamma)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

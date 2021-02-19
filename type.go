@@ -1,5 +1,6 @@
 package vimg
 
+import "C"
 import (
 	"encoding/json"
 	"regexp"
@@ -31,6 +32,78 @@ const (
 // ImageType represents an image type value.
 type ImageType int
 
+/**
+ * TODO: If they change the enum order in libvips, this breaks. Need to get the enum correctly from C
+ */
+type BlendMode int
+const (
+	BlendClear BlendMode = iota
+	BlendSource
+	BlendOver
+	BlendIn
+	BlendOut
+	BlendAtop
+	BlendDest
+	BlendDestOver
+	BlendDestIn
+	BlendDestOut
+	BlendDestAtop
+	BlendXor
+	BlendAdd
+	BlendSaturate
+	BlendMultiply
+	BlendScreen
+	BlendOverlay
+	BlendDarken
+	BlendLighten
+	BlendDodge
+	BlendBurn
+	BlendHard
+	BlendSoft
+	BlendDifference
+	BlendExclusion
+	BlendLast
+)
+
+var blendModeToID = map[string]BlendMode {
+	"clear": BlendClear,
+	"source": BlendSource,
+	"over": BlendOver,
+	"in": BlendIn,
+	"out": BlendOut,
+	"atop": BlendAtop,
+	"dest": BlendDest,
+	"dest_over": BlendDestOver,
+	"dest_in": BlendDestIn,
+	"dest_out": BlendDestOut,
+	"dest_atop": BlendDestAtop,
+	"xor": BlendXor,
+	"add": BlendAdd,
+	"saturate": BlendSaturate,
+	"multiply": BlendMultiply,
+	"screen": BlendScreen,
+	"overlay": BlendOverlay,
+	"darken": BlendDarken,
+	"lighten": BlendLighten,
+	"dodge": BlendDodge,
+	"burn": BlendBurn,
+	"soft": BlendSoft,
+	"hard": BlendHard,
+	"difference": BlendDifference,
+	"exclusion": BlendExclusion,
+	"last": BlendLast,
+}
+
+func (b *BlendMode) UnmarshalJSON(data []byte) error {
+	var s string
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+	*b = blendModeToID[s]
+	return nil
+}
+
 var (
 	htmlCommentRegex = regexp.MustCompile("(?i)<!--([\\s\\S]*?)-->")
 	svgRegex         = regexp.MustCompile(`(?i)^\s*(?:<\?xml[^>]*>\s*)?(?:<!doctype svg[^>]*>\s*)?<svg[^>]*>[^*]*<\/svg>\s*$`)
@@ -53,6 +126,13 @@ var imageInterpolatorToID = map[string]Interpolator {
 	"bilinear": Bilinear,
 	"nohalo": Nohalo,
 	"nearest": Nearest,
+}
+
+var imageInterpolatorToCString = map[Interpolator]*C.char {
+	Bicubic: C.CString("bicubic"),
+	Bilinear: C.CString("bilinear"),
+	Nohalo: C.CString("nohalo"),
+	Nearest: C.CString("nearest"),
 }
 
 var imageInterpretationToID = map[string]Interpretation {
@@ -106,6 +186,26 @@ func (t *ImageType) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*t = imageTypeToID[s]
+	return nil
+}
+
+func (p *Position) UnmarshalJSON(data []byte) error {
+	var s string
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+	*p = positions[s]
+	return nil
+}
+
+func (g *Gravity) UnmarshalJSON(data []byte) error {
+	var s string
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+	*g = gravityToID[s]
 	return nil
 }
 

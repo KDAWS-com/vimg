@@ -2,14 +2,17 @@ package vimg
 
 /*
 #cgo pkg-config: vips
-#cgo CFLAGS: -g3
+#cgo CFLAGS: -g3 -O3
+#cgo LDFLAGS: -lm
 #include "vips.h"
 */
 import "C"
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
 	"math"
 	"os"
 	"reflect"
@@ -33,18 +36,67 @@ const (
 	maxCacheSize = 1000
 )
 
+type Blob int
+
 const (
-	VIPS_META_EXIF_NAME        = "exif-data"
-	VIPS_META_XMP_NAME         = "xmp-data"
-	VIPS_META_IPTC_NAME        = "iptc-data"
-	VIPS_META_PHOTOSHOP_NAME   = "photoshop-data"
-	VIPS_META_ICC_NAME         = "icc-profile-data"
-	VIPS_META_IMAGEDESCRIPTION = "image-description"
-	VIPS_META_RESOLUTION_UNIT  = "resolution-unit"
-	VIPS_META_ORIENTATION      = "orientation"
-	VIPS_META_PAGE_HEIGHT      = "page-height"
-	VIPS_META_N_PAGES          = "n-pages"
+	VIPS_META_EXIF_NAME Blob = iota
+	VIPS_META_XMP_NAME
+	VIPS_META_IPTC_NAME
+	VIPS_META_PHOTOSHOP_NAME
+	VIPS_META_ICC_NAME
+	VIPS_META_IMAGEDESCRIPTION
+	VIPS_META_RESOLUTION_UNIT
+	VIPS_META_ORIENTATION
+	VIPS_META_PAGE_HEIGHT
+	VIPS_META_N_PAGES
 )
+
+var blobsFromString = map[string]Blob {
+	"exif-data":			VIPS_META_EXIF_NAME,
+	"xmp-data": 			VIPS_META_XMP_NAME,
+	"iptc-data":			VIPS_META_IPTC_NAME,
+	"photoshop-data": 		VIPS_META_PHOTOSHOP_NAME,
+	"icc-profile-data": 	VIPS_META_ICC_NAME,
+	"image-description": 	VIPS_META_IMAGEDESCRIPTION,
+	"resolution-unit":		VIPS_META_RESOLUTION_UNIT,
+	"orientation":			VIPS_META_ORIENTATION,
+	"page-height":			VIPS_META_PAGE_HEIGHT,
+	"n-pages":				VIPS_META_N_PAGES,
+}
+
+var blobs = map[Blob]string {
+	VIPS_META_EXIF_NAME: 		"exif-data",
+	VIPS_META_XMP_NAME: 		"xmp-data",
+	VIPS_META_IPTC_NAME: 		"iptc-data",
+	VIPS_META_PHOTOSHOP_NAME: 	"photoshop-data",
+	VIPS_META_ICC_NAME: 		"icc-profile-data",
+	VIPS_META_IMAGEDESCRIPTION: "image-description",
+	VIPS_META_RESOLUTION_UNIT: 	"resolution-unit",
+	VIPS_META_ORIENTATION: 		"orientation",
+	VIPS_META_PAGE_HEIGHT:		"page-height",
+	VIPS_META_N_PAGES:			"n-pages",
+}
+
+var blobToCString = map[Blob]*C.char {
+	VIPS_META_EXIF_NAME: 		C.CString("exif-data"),
+	VIPS_META_XMP_NAME: 		C.CString("xmp-data"),
+	VIPS_META_IPTC_NAME: 		C.CString("iptc-data"),
+	VIPS_META_PHOTOSHOP_NAME: 	C.CString("photoshop-data"),
+	VIPS_META_ICC_NAME: 		C.CString("icc-profile-data"),
+	VIPS_META_IMAGEDESCRIPTION: C.CString("image-description"),
+	VIPS_META_RESOLUTION_UNIT: 	C.CString("resolution-unit"),
+	VIPS_META_ORIENTATION: 		C.CString("orientation"),
+	VIPS_META_PAGE_HEIGHT:		C.CString("page-height"),
+	VIPS_META_N_PAGES:			C.CString("n-pages"),
+}
+
+func (b Blob) String() string {
+	return blobs[b]
+}
+
+func (b Blob) CString() *C.char {
+	return blobToCString[b]
+}
 
 var (
 	m           sync.Mutex
@@ -75,21 +127,26 @@ type vipsSaveOptions struct {
 type vipsWatermarkOptions struct {
 	Width       C.int
 	DPI         C.int
-	Margin      C.int
 	NoReplicate C.int
-	Opacity     C.float
-	Background  [3]C.double
+	Background  [4]C.double
+	Relative		C.int
+	HOffset	    	C.double
+	VOffset 		C.double
+	HAlign			C.int
+	VAlign			C.int
 }
 
 type vipsWatermarkImageOptions struct {
 	Left    C.int
 	Top     C.int
 	Opacity C.float
+	Blend	C.int
 }
 
 type vipsWatermarkTextOptions struct {
 	Text *C.char
 	Font *C.char
+	Align C.int
 }
 
 func init() {
@@ -135,8 +192,23 @@ func Initialize() {
 // You can call this to drop caches as well.
 // If libvips was already initialized, the function is no-op
 func Shutdown() {
-	//m.Lock()
-	//defer m.Unlock()
+	m.Lock()
+
+	C.free(unsafe.Pointer(imageInterpolatorToCString[Bicubic]))
+	C.free(unsafe.Pointer(imageInterpolatorToCString[Bilinear]))
+	C.free(unsafe.Pointer(imageInterpolatorToCString[Nohalo]))
+	C.free(unsafe.Pointer(imageInterpolatorToCString[Nearest]))
+
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_EXIF_NAME]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_XMP_NAME]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_IPTC_NAME]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_PHOTOSHOP_NAME]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_ICC_NAME]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_IMAGEDESCRIPTION]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_RESOLUTION_UNIT]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_ORIENTATION]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_PAGE_HEIGHT]))
+	C.free(unsafe.Pointer(blobToCString[VIPS_META_N_PAGES]))
 
 	if initialized {
 		C.vips_shutdown()
@@ -262,10 +334,11 @@ func (img *VipsImage) vipsRotate(angle Angle) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"rotate"}).Inc()
 
 	var image *C.VipsImage
-
-	err := C.vips_rotate_bimg(image, &image, C.int(angle))
+//	err := C.vips_rotate_vimg(img.Image, &image, C.double(angle))
+	err := C.vips_rotate_fill(img.Image, &image, C.double(angle), C.double(img.Options.Background.R), C.double(img.Options.Background.G), C.double(img.Options.Background.B), C.double(img.Options.Background.A))
 
 	if err != 0 {
 		return catchVipsError()
@@ -281,6 +354,7 @@ func (img *VipsImage) vipsFlip(direction Direction) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"flip"}).Inc()
 
 	//m.Lock()
 	//defer m.Unlock()
@@ -293,7 +367,7 @@ func (img *VipsImage) vipsFlip(direction Direction) error {
 		return catchVipsError()
 	}
 
-//	C.g_object_unref(C.gpointer(img.Image))
+	C.g_object_unref(C.gpointer(img.Image))
 	img.Image = image
 
 	return nil
@@ -303,6 +377,7 @@ func (img *VipsImage) vipsZoom(zoom int) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"zoom"}).Inc()
 
 	//m.Lock()
 	//defer m.Unlock()
@@ -325,6 +400,7 @@ func (img *VipsImage) vipsWatermark(w Watermark) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"watermark_text"}).Inc()
 
 	//m.Lock()
 	//defer m.Unlock()
@@ -337,19 +413,28 @@ func (img *VipsImage) vipsWatermark(w Watermark) error {
 		noReplicate = 1
 	}
 
+	o := img.Options.Watermark
+
 	text := C.CString(w.Text)
 	font := C.CString(w.Font)
-	background := [3]C.double{C.double(w.Background.R), C.double(w.Background.G), C.double(w.Background.B)}
+	background := [4]C.double{C.double(w.Background.R), C.double(w.Background.G), C.double(w.Background.B), C.double(w.Background.A)}
+//fmt.Printf("Background: %+v\n", background)
+	var relative int
+	if w.Relative { relative = 1 } else { relative = 0 }
 
-	textOpts := vipsWatermarkTextOptions{text, font}
-	opts := vipsWatermarkOptions{C.int(w.Width), C.int(w.DPI), C.int(w.Margin), C.int(noReplicate), C.float(w.Opacity), background}
-
+	textOpts := vipsWatermarkTextOptions{text, font, C.int(o.TextAlign)}
+	opts := vipsWatermarkOptions{C.int(w.Width), C.int(w.DPI), C.int(noReplicate), background, C.int(relative), C.double(o.HOffset), C.double(o.VOffset), C.int(o.HAlign), C.int(o.VAlign)}
+//fmt.Printf("X,Y: %+v, %+v\n", img.Image.Xsize, img.Image.Ysize)
+//fmt.Printf("Watermark: %+v\n", w)
+//fmt.Printf("Watermark Text: %+v\n", textOpts)
+//fmt.Printf("Watermark Options: %+v\n", opts)
 	err := C.vips_watermark(img.Image, &image, (*C.WatermarkTextOptions)(unsafe.Pointer(&textOpts)), (*C.WatermarkOptions)(unsafe.Pointer(&opts)))
 
 	C.free(unsafe.Pointer(text))
 	C.free(unsafe.Pointer(font))
 
 	if err != 0 {
+//		fmt.Printf("Watermark Error: %+v\n", err)
 		return catchVipsError()
 	}
 
@@ -359,21 +444,21 @@ func (img *VipsImage) vipsWatermark(w Watermark) error {
 	return nil
 }
 
-func (img *VipsImage) vipsRead(buf []byte) error {
+func (img *VipsImage) vipsRead(buf *bytes.Buffer) error {
 	// No pointer check as this might be first call
 
 	//m.Lock()
 	//defer m.Unlock()
 
-	var image *C.VipsImage
-	imageType := vipsImageType(buf)
-
+	img.Buffer = buf.Bytes()
+	imageType := vipsImageType(img.Buffer)
 	if imageType == UNKNOWN {
 		return errors.New("Unsupported image format")
 	}
 
-	length := C.size_t(len(buf))
-	imageBuf := unsafe.Pointer(&buf[0])
+	var image *C.VipsImage
+	length := C.size_t(len(img.Buffer))
+	imageBuf := unsafe.Pointer(&img.Buffer[0])
 	err := C.vips_init_image(imageBuf, length, C.int(imageType), &image)
 	defer func() {
 		C.vips_thread_shutdown()
@@ -382,18 +467,18 @@ func (img *VipsImage) vipsRead(buf []byte) error {
 	}()
 
 	if err != 0 {
+		img.Buffer = nil
 		//C.g_object_unref(C.gpointer(imageBuf))
 		return catchVipsError()
 	}
 
 	if !reflect.ValueOf(img.Image).IsNil() {
-fmt.Println("Image Re-init")
 		C.g_object_unref(C.gpointer(img.Image))
 	}
 
 	img.Image = image
 	img.Type = imageType
-	img.Buffer = buf
+//	img.Buffer = buf
 
 	//C.g_object_unref(C.gpointer(imageBuf))
 
@@ -439,19 +524,21 @@ func (img *VipsImage) vipsFlattenBackground(background Color) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"flatten"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
 	var image *C.VipsImage
 
-	backgroundC := [3]C.double{
+	backgroundC := [4]C.double{
 		C.double(background.R),
 		C.double(background.G),
 		C.double(background.B),
+		C.double(background.A),
 	}
 
 	if alpha, e := img.vipsHasAlpha(); alpha && e == nil {
-		err := C.vips_flatten_background_brigde(img.Image, &image, backgroundC[0], backgroundC[1], backgroundC[2])
+		err := C.vips_flatten_background_brigde(img.Image, &image, backgroundC[0], backgroundC[1], backgroundC[2], backgroundC[3])
 		if int(err) != 0 {
 			return catchVipsError()
 		}
@@ -462,10 +549,11 @@ func (img *VipsImage) vipsFlattenBackground(background Color) error {
 	return nil
 }
 
-func (img *VipsImage) vipsBlob(name string) (*[]byte, error) {
+func (img *VipsImage) vipsBlob(name Blob) (*[]byte, error) {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return nil, ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"blob"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -488,7 +576,7 @@ func (img *VipsImage) vipsBlob(name string) (*[]byte, error) {
 	 * See above warning on ptr
 	 */
 
-	blobErr = C.vips_image_get_blob_bridge(img.Image, &ptr, &length, C.CString(name))
+	blobErr = C.vips_image_get_blob_bridge(img.Image, &ptr, &length, name.CString())
 
 	if int(blobErr) != 0 {
 		return nil, catchVipsError()
@@ -553,6 +641,7 @@ func (img *VipsImage) vipsSave(o vipsSaveOptions) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"save"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -636,6 +725,7 @@ func (img *VipsImage) getImageBuffer() ([]byte, error) {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return nil, ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"getbuffer"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -667,10 +757,11 @@ func (img *VipsImage) getImageBuffer() ([]byte, error) {
 	return buf, nil
 }
 
-func (img *VipsImage) vipsExtract(left, top, width, height int) (*VipsImage, error) {
+func (img *VipsImage) vipsExtract(left, top, width, height float32) (*VipsImage, error) {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return nil, ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"extract"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 	var image *C.VipsImage
@@ -679,25 +770,38 @@ func (img *VipsImage) vipsExtract(left, top, width, height int) (*VipsImage, err
 		return nil, errors.New("Maximum image size exceeded")
 	}
 
-	top, left = max(top), max(left)
+	srcX := float32(img.Image.Xsize)
+	srcY := float32(img.Image.Ysize)
+
+	if img.Options.Extract.Relative {
+		top = srcY * (top/100)
+		left = srcX * (left/100)
+		height = srcY * (height/100)
+		width = srcX * (width/100)
+	}
+
 	err := C.vips_extract_area_bridge(img.Image, &image, C.int(left), C.int(top), C.int(width), C.int(height))
 	if err != 0 {
 		return nil, catchVipsError()
 	}
 
 	var e error
-	i := VipsImage{nil, image, JPEG, Options{}}
+	i := AquireVipsImage()
+	i.Image = image
+	i.Type = JPEG
+	i.Options = Options{}
 	i.Buffer, e = i.getImageBuffer()
 	if e != nil {
 		return nil, e
 	}
-	return &i, nil
+	return i, nil
 }
 
 func (img *VipsImage) vipsSmartCrop(width, height int) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"smartcrop"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 	var image *C.VipsImage
@@ -721,6 +825,7 @@ func (img *VipsImage) vipsTrim(background Color, threshold float64) (int, int, i
 	if reflect.ValueOf(img.Image).IsNil() {
 		return 0, 0, 0, 0,ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"trim"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -744,6 +849,7 @@ func (img *VipsImage) vipsShrinkJpeg(shrink int) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"shrink_jpeg"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -767,6 +873,7 @@ func (img *VipsImage) vipsShrinkWebp(shrink int) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"shrink_webp"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -790,6 +897,7 @@ func (img *VipsImage) vipsShrink(shrink int) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"shrink"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -811,16 +919,15 @@ func (img *VipsImage) vipsResize(scale float64, i Interpolator) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"resize"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 	var image *C.VipsImage
 
-	cstring := C.CString(i.String())
-	interpolator := C.vips_interpolate_new(cstring)
+	interpolator := C.vips_interpolate_new(i.CString())
 
 	err := C.vips_resize_bridge(img.Image, &image, C.double(scale), interpolator)
 
-	C.free(unsafe.Pointer(cstring))
 	C.g_object_unref(C.gpointer(interpolator))
 
 	if err != 0 {
@@ -836,6 +943,7 @@ func (img *VipsImage) vipsReduce(xshrink float64, yshrink float64) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"reduce"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -857,6 +965,7 @@ func (img *VipsImage) vipsEmbed(left, top, width, height int, extend Extend, bac
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"embed"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
@@ -885,16 +994,15 @@ func (img *VipsImage) vipsAffine(residualx, residualy float64, i Interpolator) e
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"affine"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
 	var image *C.VipsImage
-	cstring := C.CString(i.String())
-	interpolator := C.vips_interpolate_new(cstring)
+	interpolator := C.vips_interpolate_new(i.CString())
 
 	err := C.vips_affine_interpolator(img.Image, &image, C.double(residualx), 0, 0, C.double(residualy), interpolator)
 
-	C.free(unsafe.Pointer(cstring))
 	C.g_object_unref(C.gpointer(interpolator))
 
 	if err != 0 {
@@ -966,8 +1074,11 @@ func (img *VipsImage) vipsGaussianBlur(o GaussianBlur) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"blur"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
+
+	if o.Sigma == 0 { o.Sigma = 1 }
 
 	var image *C.VipsImage
 
@@ -987,12 +1098,13 @@ func (img *VipsImage) vipsSharpen(o Sharpen) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"sharpen"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
 	var image *C.VipsImage
 
-	err := C.vips_sharpen_bridge(img.Image, &image, C.int(o.Radius), C.double(o.X1), C.double(o.Y2), C.double(o.Y3), C.double(o.M1), C.double(o.M2))
+	err := C.vips_sharpen_bridge(img.Image, &image, C.double(o.Sigma), C.double(o.X1), C.double(o.Y2), C.double(o.Y3), C.double(o.M1), C.double(o.M2))
 
 	if err != 0 {
 		return catchVipsError()
@@ -1012,11 +1124,115 @@ func (img *VipsImage) vipsDrawWatermark(o WatermarkImage) error {
 	if reflect.ValueOf(img.Image).IsNil() {
 		return ErrVipsImageNotValidPointer
 	}
+	vimgOperations.With(prometheus.Labels{"type":"watermark_image"}).Inc()
+
+	srcX := float32(img.Image.Xsize)
+	srcY := float32(img.Image.Ysize)
+
+	var wmOptions Options
+	var left float32
+	var top float32
+	if o.Relative {
+		wmOptions.Width = int(srcX * (o.Width / 100))
+		wmOptions.Force = false
+	} else {
+		wmOptions.Width = int(o.Width)
+		wmOptions.Force = false
+	}
+	wmOptions.MaintainAspect = true
+	wmOptions.Enlarge = false
+	wmOptions.Background = ColorBlack
+	var image *C.VipsImage
+	br := bytes.NewBuffer(o.Buf)
+	watermark, e := NewVipsImage(br, wmOptions)
+	if watermark != nil {
+		defer watermark.DecrementReferenceCount()
+	}
+	if e != nil {
+		return e
+	}
+	e = watermark.Process()
+	if e != nil {
+		return e
+	}
+
+	wmX := float32(watermark.Image.Xsize)
+	wmY := float32(watermark.Image.Ysize)
+
+	if o.Relative {
+		switch o.HAlign {
+		case PositionLeft:
+			left = (o.HOffset / 100) * srcX
+			break
+		case PositionRight:
+			hOffset := (o.HOffset / 100) * srcX
+			left = srcX - hOffset - wmX
+			break
+		case PositionCentre:
+			left = (srcX - wmX) / 2
+		}
+		switch o.VAlign {
+		case PositionTop:
+			top = (o.VOffset / 100) * srcY
+			break
+		case PositionBottom:
+			vOffset := (o.VOffset / 100) * srcY
+			top = srcY - vOffset - wmY
+			break
+		case PositionCentre:
+			top = (srcY - wmY) / 2
+		}
+	} else {
+		switch o.HAlign {
+		case PositionLeft:
+			left = o.HOffset
+			break
+		case PositionRight:
+			left = srcX - o.HOffset - wmX
+			break
+		case PositionCentre:
+			left = (srcX - wmX) / 2
+		}
+		switch o.VAlign {
+		case PositionTop:
+			top = o.VOffset
+			break
+		case PositionBottom:
+			top = srcY - o.VOffset - wmY
+			break
+		case PositionCentre:
+			top = (srcY - wmY) / 2
+		}
+	}
+
+	opts := vipsWatermarkImageOptions{C.int(left), C.int(top), C.float(o.Opacity), C.int(o.BlendMode)}
+
+	err := C.vips_watermark_image(img.Image, watermark.Image, &image, (*C.WatermarkImageOptions)(unsafe.Pointer(&opts)))
+
+	if err != 0 {
+		return catchVipsError()
+	}
+
+	C.g_object_unref(C.gpointer(img.Image))
+	img.Image = image
+
+	return nil
+}
+/*
+func (img *VipsImage) vipsDrawWatermark(o WatermarkImage) error {
+	if reflect.ValueOf(img.Image).IsNil() {
+		return ErrVipsImageNotValidPointer
+	}
+	vimgOperations.With(prometheus.Labels{"type":"watermark_image"}).Inc()
 	//m.Lock()
 	//defer m.Unlock()
 
 	var image *C.VipsImage
-	watermark, e := NewVipsImage(o.Buf, Options{})
+	br := bytes.NewBuffer(o.Buf)
+	watermark, e := NewVipsImage(br, Options{})
+	if watermark != nil {
+		defer watermark.DecrementReferenceCount()
+	}
 
 	if e != nil {
 		return e
@@ -1034,4 +1250,36 @@ func (img *VipsImage) vipsDrawWatermark(o WatermarkImage) error {
 	img.Image = image
 
 	return nil
+}
+*/
+
+func (img *VipsImage) vipsGamma(Gamma float64) error {
+	defer C.g_object_unref(C.gpointer(img.Image))
+
+	var image *C.VipsImage
+
+	err := C.vips_gamma_bridge(img.Image, &image, C.double(Gamma))
+	if err != 0 {
+		return catchVipsError()
+	}
+
+	C.g_object_unref(C.gpointer(img.Image))
+	img.Image = image
+
+	return nil
+}
+
+func (img *VipsImage) vipsExifStringTag(tag string) string {
+	return vipsExifShort(C.GoString(C.vips_exif_tag(img.Image, C.CString(tag))))
+}
+
+func (img *VipsImage) vipsExifIntTag(tag string) int {
+	return int(C.vips_exif_tag_to_int(img.Image, C.CString(tag)))
+}
+
+func vipsExifShort(s string) string {
+	if strings.Contains(s, " (") {
+		return s[:strings.Index(s, "(")-1]
+	}
+	return s
 }

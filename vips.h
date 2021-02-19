@@ -1,5 +1,7 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <vips/vips.h>
 #include <vips/foreign.h>
 #include <vips/vips7compat.h>
@@ -19,6 +21,10 @@
 #endif
 
 #define EXIF_IFD0_ORIENTATION "exif-ifd0-Orientation"
+#define EXIF_IFD0_MAKE "exif-ifd0-Make"
+#define EXIF_IFD0_MODEL "exif-ifd0-Model"
+#define EXIF_IFD0_SOFTWARE "exif-ifd0-Software"
+#define EXIF_IFD0_DATETIME "exif-ifd0-DateTime"
 
 #define INT_TO_GBOOLEAN(bool) (bool > 0 ? TRUE : FALSE)
 
@@ -38,21 +44,26 @@ enum types {
 typedef struct {
 	const char *Text;
 	const char *Font;
+	int        Align;
 } WatermarkTextOptions;
 
 typedef struct {
 	int    Width;
 	int    DPI;
-	int    Margin;
 	int    NoReplicate;
-	float  Opacity;
-	double Background[3];
+	double Background[4];
+	int    Relative;
+	double HOffset;
+	double VOffset;
+	int    HAlign;
+	int    VAlign;
 } WatermarkOptions;
 
 typedef struct {
 	int    Left;
 	int    Top;
 	float    Opacity;
+	int     Blend;
 } WatermarkImageOptions;
 
 static unsigned long
@@ -181,10 +192,10 @@ vips_type_find_save_bridge(int t) {
 }
 
 int
-vips_rotate_bimg(VipsImage *in, VipsImage **out, int angle) {
+vips_rotate_fill(VipsImage *in, VipsImage **out, double angle, double r, double g, double b, double a) {
 	int rotate = VIPS_ANGLE_D0;
 
-	angle %= 360;
+	angle = fmod(angle,360);
 
 	if (angle == 45) {
 		rotate = VIPS_ANGLE45_D45;
@@ -200,15 +211,65 @@ vips_rotate_bimg(VipsImage *in, VipsImage **out, int angle) {
 		rotate = VIPS_ANGLE_D270;
 	} else if (angle == 315) {
 		rotate = VIPS_ANGLE45_D315;
-	} else {
-		angle = 0;
 	}
 
-	if (angle > 0 && angle % 90 != 0) {
-		return vips_rot45(in, out, "angle", rotate, NULL);
-	} else {
+	if (angle > 0 && fmod(angle,90) == 0) {
 		return vips_rot(in, out, rotate, NULL);
+/*	} else if (angle > 0 && fmod(angle,45) == 0 ) {
+		return vips_rot45(in, out, "angle", rotate, NULL);*/
+	} else {
+	    double background[4] = {r, g, b, a};
+        VipsImage *base = vips_image_new();
+        VipsImage **t;
+        t = (VipsImage **) vips_object_local_array (VIPS_OBJECT(base), 2);
+        t[0] = in;
+    	VipsArrayDouble *vipsBackground = vips_array_double_new(background, 4);
+        if (!vips_image_hasalpha(in)) {
+            if (vips_bandjoin_const1(t[0], &t[1], 255, NULL)) {
+                vips_area_unref(VIPS_AREA (vipsBackground));
+                g_object_unref(base);
+                return 1;
+            }
+        } else {
+            t[1] = t[0];
+        }
+
+	    if (vips_similarity(t[1], out, "angle", angle, "background", vipsBackground, NULL)) {
+            g_object_unref(base);
+            vips_area_unref(VIPS_AREA (vipsBackground));
+	        return 1;
+	    };
+        g_object_unref(base);
+        vips_area_unref(VIPS_AREA (vipsBackground));
+	    return 0;
 	}
+}
+
+int
+vips_rotate_vimg(VipsImage *in, VipsImage **out, double angle) {
+    return vips_rotate_fill(in, out, angle, 0, 0, 0, 255);
+}
+
+const char *
+vips_exif_tag(VipsImage *image, const char *tag) {
+	const char *exif;
+	if (
+		vips_image_get_typeof(image, tag) != 0 &&
+		!vips_image_get_string(image, tag, &exif)
+	) {
+		return &exif[0];
+	}
+	return "";
+}
+
+int
+vips_exif_tag_to_int(VipsImage *image, const char *tag) {
+	int value = 0;
+	const char *exif = vips_exif_tag(image, tag);
+	if (strcmp(exif, "")) {
+		value = atoi(&exif[0]);
+	}
+	return value;
 }
 
 int
@@ -223,6 +284,8 @@ vips_exif_orientation(VipsImage *image) {
 	}
 	return orientation;
 }
+
+
 
 int
 interpolator_window_size(char const *name) {
@@ -305,7 +368,7 @@ vips_pngsave_bridge(VipsImage *in, void **buf, size_t *len, int strip, int compr
 		"strip", INT_TO_GBOOLEAN(strip),
 		"compression", compression,
 		"interlace", INT_TO_GBOOLEAN(interlace),
-		"filter", VIPS_FOREIGN_PNG_FILTER_NONE,
+		"filter", VIPS_FOREIGN_PNG_FILTER_ALL,
 		NULL
 	);
 #else
@@ -343,14 +406,15 @@ vips_is_16bit (VipsInterpretation interpretation) {
 }
 
 int
-vips_flatten_background_brigde(VipsImage *in, VipsImage **out, double r, double g, double b) {
+vips_flatten_background_brigde(VipsImage *in, VipsImage **out, double r, double g, double b, double a) {
 	if (vips_is_16bit(in->Type)) {
 		r = 65535 * r / 255;
 		g = 65535 * g / 255;
 		b = 65535 * b / 255;
+		a = 65535 * a / 255;
 	}
 
-	double background[3] = {r, g, b};
+	double background[4] = {r, g, b, a};
 	VipsArrayDouble *vipsBackground = vips_array_double_new(background, 3);
 
 	return vips_flatten(in, out,
@@ -406,29 +470,107 @@ vips_watermark_replicate (VipsImage *orig, VipsImage *in, VipsImage **out) {
 	g_object_unref(cache);
 	return 0;
 }
-
+/*
 int
 vips_watermark(VipsImage *in, VipsImage **out, WatermarkTextOptions *to, WatermarkOptions *o) {
-	double ones[3] = { 1, 1, 1 };
+	double ones[4] = { 0, 0, 0, 1 };
 
 	VipsImage *base = vips_image_new();
-	VipsImage **t = (VipsImage **) vips_object_local_array(VIPS_OBJECT(base), 10);
+	VipsImage **t = (VipsImage **) vips_object_local_array(VIPS_OBJECT(base), 11);
 	t[0] = in;
 
-	// Make the mask.
+    int srcX = in->Xsize;
+    int srcY = in->Ysize;
+    double left, top;
+    double hOffset, vOffset;
+    double opacity;
+
+	opacity = (o->Background[3] / 255)*255;
+printf("Opacity: %f\n", o->Background[3]);
+
+	// Make most of the the mask.
+	// We need to do part here to get the height of the text for the relative positioning if required.
 	if (
 		vips_text(&t[1], to->Text,
 			"width", o->Width,
 			"dpi", o->DPI,
 			"font", to->Font,
+			"align", to->Align,
 			NULL) ||
-		vips_linear1(t[1], &t[2], o->Opacity, 0.0, NULL) ||
-		vips_cast(t[2], &t[3], VIPS_FORMAT_UCHAR, NULL) ||
-		vips_embed(t[3], &t[4], 100, 100, t[3]->Xsize + o->Margin, t[3]->Ysize + o->Margin, NULL)
-		) {
+		vips_linear1(t[1], &t[2], opacity, 0.0, NULL) ||
+		vips_cast(t[2], &t[3], VIPS_FORMAT_UCHAR, NULL) ) {
 		g_object_unref(base);
 		return 1;
 	}
+
+	printf("SRC Bands: %d\n", t[0]->Bands);
+
+    if (!vips_image_hasalpha(t[0])) {
+        if (vips_bandjoin_const1(t[0], &t[10], 255, NULL)) {
+            g_object_unref(base);
+            return 1;
+        }
+        t[0] = t[10];
+    }
+
+    printf("SRC Bands: %d\n", t[0]->Bands);
+	printf("Text Bands: %d\n", t[3]->Bands);
+
+	int wmX = t[3]->Xsize;
+	int wmY = t[3]->Ysize;
+
+	if (o->Relative) {
+		switch (o->HAlign) {
+		case 1:
+			left = (o->HOffset / 100) * srcX;
+			break;
+		case 2:
+			hOffset = (o->HOffset / 100) * srcX;
+			left = srcX - hOffset - wmX;
+			break;
+		case 0:
+			left = (srcX - wmX) / 2;
+		}
+		switch (o->VAlign) {
+		case 3:
+			top = (o->VOffset / 100) * srcY;
+			break;
+		case 4:
+			vOffset = (o->VOffset / 100) * srcY;
+			top = srcY - vOffset - wmY;
+			break;
+		case 0:
+			top = (srcY - wmY) / 2;
+		}
+	} else {
+		switch (o->HAlign) {
+		case 1:
+			left = o->HOffset;
+			break;
+		case 2:
+			left = srcX - o->HOffset - wmX;
+			break;
+		case 0:
+			left = (srcX - wmX) / 2;
+		}
+		switch (o->VAlign) {
+		case 3:
+			top = o->VOffset;
+			break;
+		case 4:
+			top = srcY - o->VOffset - wmY;
+			break;
+		case 0:
+			top = (srcY - wmY) / 2;
+		}
+	}
+
+    // Now we have our positionings, we can create the text overlay image.
+	if (vips_embed(t[3], &t[4], left, top, t[3]->Xsize + left, t[3]->Ysize + top, NULL) ) {
+	    g_object_unref(base);
+        return 1;
+	}
+	printf("Text Bands: %d\n", t[4]->Bands);
 
 	// Replicate if necessary
 	if (o->NoReplicate != 1) {
@@ -436,29 +578,219 @@ vips_watermark(VipsImage *in, VipsImage **out, WatermarkTextOptions *to, Waterma
 		if (vips_watermark_replicate(t[0], t[4], &cache)) {
 			g_object_unref(cache);
 			g_object_unref(base);
-			return 1;
+			return 2;
 		}
 		g_object_unref(t[4]);
 		t[4] = cache;
 	}
-
+/*
 	// Make the constant image to paint the text with.
 	if (
 		vips_black(&t[5], 1, 1, NULL) ||
-		vips_linear(t[5], &t[6], ones, o->Background, 3, NULL) ||
+		vips_linear(t[5], &t[6], ones, o->Background, 4, NULL) ||
 		vips_cast(t[6], &t[7], VIPS_FORMAT_UCHAR, NULL) ||
 		vips_copy(t[7], &t[8], "interpretation", t[0]->Type, NULL) ||
 		vips_embed(t[8], &t[9], 0, 0, t[0]->Xsize, t[0]->Ysize, "extend", VIPS_EXTEND_COPY, NULL)
 		) {
 		g_object_unref(base);
-		return 1;
+		return 3;
 	}
+	printf("Text Bands: %d\n", t[9]->Bands);
 
 	// Blend the mask and text and write to output.
 	if (vips_ifthenelse(t[4], t[9], t[0], out, "blend", TRUE, NULL)) {
 		g_object_unref(base);
+		return 4;
+	}
+*/
+/*
+    if (vips_composite2(t[0], t[4], out, VIPS_BLEND_MODE_OVER, "x", 0, "y", 0, "premultiplied", FALSE, NULL )) {
+        g_object_unref(base);
+        return 1;
+    }
+
+	g_object_unref(base);
+	return 0;
+}*/
+
+
+int
+vips_watermark(VipsImage *in, VipsImage **out, WatermarkTextOptions *to, WatermarkOptions *o) {
+	double ones[4] = { 1, 1, 1, 1 };
+	double zeroes[4] = { 0, 0, 0, 0 };
+
+	VipsImage *base = vips_image_new();
+	VipsImage **t = (VipsImage **) vips_object_local_array(VIPS_OBJECT(base), 15);
+	t[0] = in;
+
+    int srcX = in->Xsize;
+    int srcY = in->Ysize;
+    double left, top;
+    double hOffset, vOffset;
+    double opacity;
+
+	opacity = (o->Background[3] / 255)*255;
+//printf("Opacity: %f\n", o->Background[3]);
+
+	// Make most of the the mask.
+	// We need to do part here to get the height of the text for the relative positioning if required.
+	if (
+		vips_text(&t[1], to->Text,
+			"width", o->Width,
+			"dpi", o->DPI,
+			"font", to->Font,
+			"align", to->Align,
+			NULL) ||
+		vips_linear1(t[1], &t[2], opacity, 0.0, NULL) ||
+		vips_cast(t[2], &t[3], VIPS_FORMAT_UCHAR, NULL) ) {
+		g_object_unref(base);
 		return 1;
 	}
+
+//	printf("SRC Bands: %d\n", t[0]->Bands);
+
+    if (!vips_image_hasalpha(t[0])) {
+        if (vips_bandjoin_const1(t[0], &t[10], 255, NULL)) {
+            g_object_unref(base);
+            return 1;
+        }
+        t[0] = t[10];
+    }
+
+//    printf("SRC Bands: %d\n", t[0]->Bands);
+//	printf("Text Bands: %d\n", t[3]->Bands);
+
+	int wmX = t[3]->Xsize;
+	int wmY = t[3]->Ysize;
+
+	if (o->Relative) {
+		switch (o->HAlign) {
+		case 1:
+			left = (o->HOffset / 100) * srcX;
+			break;
+		case 2:
+			hOffset = (o->HOffset / 100) * srcX;
+			left = srcX - hOffset - wmX;
+			break;
+		case 0:
+			left = (srcX - wmX) / 2;
+		}
+		switch (o->VAlign) {
+		case 3:
+			top = (o->VOffset / 100) * srcY;
+			break;
+		case 4:
+			vOffset = (o->VOffset / 100) * srcY;
+			top = srcY - vOffset - wmY;
+			break;
+		case 0:
+			top = (srcY - wmY) / 2;
+		}
+	} else {
+		switch (o->HAlign) {
+		case 1:
+			left = o->HOffset;
+			break;
+		case 2:
+			left = srcX - o->HOffset - wmX;
+			break;
+		case 0:
+			left = (srcX - wmX) / 2;
+		}
+		switch (o->VAlign) {
+		case 3:
+			top = o->VOffset;
+			break;
+		case 4:
+			top = srcY - o->VOffset - wmY;
+			break;
+		case 0:
+			top = (srcY - wmY) / 2;
+		}
+	}
+
+    // Now we have our positionings, we can create the text overlay image.
+	if (vips_embed(t[3], &t[4], left, top, t[3]->Xsize + left, t[3]->Ysize + top, NULL) ) {
+	    g_object_unref(base);
+        return 1;
+	}
+//	printf("Text Bands: %d\n", t[4]->Bands);
+
+	// Replicate if necessary
+	if (o->NoReplicate != 1) {
+		VipsImage *cache = vips_image_new();
+		if (vips_watermark_replicate(t[0], t[4], &cache)) {
+			g_object_unref(cache);
+			g_object_unref(base);
+			return 2;
+		}
+		g_object_unref(t[4]);
+		t[4] = cache;
+	}
+
+    if( vips_is_16bit(vips_image_guess_interpretation(t[1])) ) {
+        o->Background[0] = 65535 * o->Background[0] / 255;
+        o->Background[1] = 65535 * o->Background[1] / 255;
+        o->Background[2] = 65535 * o->Background[2] / 255;
+    }
+
+    int visibleBands = 0;
+    int alphaBands = 0;
+    if (t[0]->Bands >= 4 && vips_image_guess_interpretation(t[0]) == VIPS_INTERPRETATION_CMYK) {
+        visibleBands = 4;
+    } else if (t[0]->Bands >=3) {
+        visibleBands = 3;
+    } else {
+        visibleBands = 1;
+    }
+    alphaBands = t[0]->Bands - visibleBands;
+/*
+    if (t[0]->Bands - visibleBands > 0) {
+        if (vips_extract_band(t[0], &t[5], visibleBands, "n", alphaBands, NULL)) {
+            return 3;
+        }
+    }
+*/
+	// Make the constant image to paint the text with.
+	if (
+		vips_black(&t[6], 1, 1, NULL) ||
+    	vips_linear(t[6], &t[7], ones, ones, 4, NULL) ||
+		vips_linear(t[7], &t[8], o->Background, zeroes, 4, NULL) ||
+		vips_cast(t[8], &t[9], VIPS_FORMAT_UCHAR, NULL) ||
+		vips_copy(t[9], &t[10], "interpretation", t[0]->Type, NULL) ||
+		vips_embed(t[10], &t[11], 0, 0, t[0]->Xsize, t[0]->Ysize, "extend", VIPS_EXTEND_COPY, NULL)
+		) {
+		g_object_unref(base);
+		return 4;
+	}
+/*	printf("Text Bands: %d\n", t[6]->Bands);
+	printf("Text Bands: %d\n", t[7]->Bands);
+	printf("Text Bands: %d\n", t[8]->Bands);
+	printf("Text Bands: %d\n", t[9]->Bands);
+	printf("Text Bands: %d\n", t[10]->Bands);
+	printf("Text Bands: %d\n", t[11]->Bands);*/
+
+	// Blend the mask and text and write to output.
+	if (vips_ifthenelse(t[4], t[11], t[0], out, "blend", TRUE, NULL)) {
+		g_object_unref(base);
+		return 4;
+	}
+/*
+    if (alphaBands > 0) {
+        if (vips_bandjoin2(t[12],t[5], out, NULL)) {
+            g_object_unref(base);
+        	return 5;
+        }
+    } else {
+        out = &t[12];
+    }
+*/
+/*
+    if (vips_composite2(t[0], t[4], out, VIPS_BLEND_MODE_OVER, "x", 0, "y", 0, "premultiplied", FALSE, NULL )) {
+        g_object_unref(base);
+        return 1;
+    }
+*/
 
 	g_object_unref(base);
 	return 0;
@@ -474,11 +806,11 @@ vips_gaussblur_bridge(VipsImage *in, VipsImage **out, double sigma, double min_a
 }
 
 int
-vips_sharpen_bridge(VipsImage *in, VipsImage **out, int radius, double x1, double y2, double y3, double m1, double m2) {
+vips_sharpen_bridge(VipsImage *in, VipsImage **out, double sigma, double x1, double y2, double y3, double m1, double m2) {
 #if (VIPS_MAJOR_VERSION == 7 && VIPS_MINOR_VERSION < 41)
-	return vips_sharpen(in, out, radius, x1, y2, y3, m1, m2, NULL);
+	return vips_sharpen(in, out, sigmaw, x1, y2, y3, m1, m2, NULL);
 #else
-	return vips_sharpen(in, out, "radius", radius, "x1", x1, "y2", y2, "y3", y3, "m1", m1, "m2", m2, NULL);
+	return vips_sharpen(in, out, "sigma", sigma, "x1", x1, "y2", y2, "y3", y3, "m1", m1, "m2", m2, NULL);
 #endif
 }
 
@@ -499,7 +831,7 @@ vips_add_band(VipsImage *in, VipsImage **out, double c) {
 #endif
 }
 
-int
+/*int
 vips_watermark_image(VipsImage *in, VipsImage *sub, VipsImage **out, WatermarkImageOptions *o) {
 	VipsImage *base = vips_image_new();
 	VipsImage **t = (VipsImage **) vips_object_local_array(VIPS_OBJECT(base), 10);
@@ -508,7 +840,7 @@ vips_watermark_image(VipsImage *in, VipsImage *sub, VipsImage **out, WatermarkIm
 	t[0] = in;
 	t[1] = sub;
 
-  if (has_alpha_channel(in) == 0) {
+    if (has_alpha_channel(in) == 0) {
 		vips_add_band(in, &t[0], 255.0);
 		// in is no longer in the array and won't be unreffed, so add it at the end
 		t[8] = in;
@@ -548,6 +880,64 @@ vips_watermark_image(VipsImage *in, VipsImage *sub, VipsImage **out, WatermarkIm
 
 	g_object_unref(base);
 	return 0;
+}*/
+int
+vips_watermark_image(VipsImage *in, VipsImage *sub, VipsImage **out, WatermarkImageOptions *o) {
+	VipsImage *base = vips_image_new();
+	VipsImage **t = (VipsImage **) vips_object_local_array(VIPS_OBJECT(base), 10);
+
+	t[0] = in;
+	t[1] = sub;
+    double opacity;
+    double opacityInverse;
+    if( vips_is_16bit(vips_image_guess_interpretation(t[1])) ) {
+        opacity = 65535 * o->Opacity;
+        opacityInverse = 65535 - opacity;
+    } else {
+        //opacity = 255 * (1 - o->Opacity);
+        //opacityInverse = 255 * o->Opacity;
+        opacity = 255 * o->Opacity;
+        opacityInverse = 255 - opacity;
+    }
+    if (!vips_image_hasalpha(t[1])) {
+        if (vips_bandjoin_const1(t[1], &t[2], opacity, NULL)) {
+            g_object_unref(base);
+            return 1;
+        }
+    } else {
+        double multiply[4];
+        double addition[4];
+        int bands;
+        if (t[1]->Bands == 2) {
+        // Multiply the Alpha channel by the requested Opacity
+            multiply[0] = 1;
+            multiply[1] = o->Opacity;
+            addition[0] = 0;
+            addition[1] = 0;
+            bands = 2;
+        } else {
+            multiply[0] = 1;
+            multiply[1] = 1;
+            multiply[2] = 1;
+            multiply[3] = o->Opacity;
+            addition[0] = 0;
+            addition[1] = 0;
+            addition[2] = 0;
+            addition[3] = 0;
+            bands = 4;
+        }
+        if (vips_linear(t[1], &t[2], multiply, addition, bands, NULL)) {
+            g_object_unref(base);
+            return 1;
+        }
+    }
+    if (vips_composite2(t[0], t[2], out, o->Blend, "x", o->Left, "y", o->Top, "premultiplied", FALSE, NULL )) {
+        g_object_unref(base);
+        return 1;
+    }
+
+	g_object_unref(base);
+	return 0;
 }
 
 int
@@ -573,4 +963,9 @@ int vips_find_trim_bridge(VipsImage *in, int *top, int *left, int *width, int *h
 #else
 	return 0;
 #endif
+}
+
+int vips_gamma_bridge(VipsImage *in, VipsImage **out, double exponent)
+{
+  return vips_gamma(in, out, "exponent", 1.0 / exponent, NULL);
 }

@@ -1,23 +1,55 @@
 package vimg
 
 import (
+	"bytes"
 	"errors"
+	"github.com/karlaustin/refcount"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Image provides a simple method DSL to transform a given image as byte buffer.
 type Image struct {
+	refcount.ReferenceCounter
 	VipsImage *VipsImage
 }
 
 // NewImage creates a new Image struct with method DSL.
-func NewImage(buf []byte, o Options) (*Image, error) {
+func NewImage(buf *bytes.Buffer, o Options) (*Image, error) {
+	vimgImageBuffer.With(prometheus.Labels{"action":"request", "type":"image"}).Inc()
 	var err error
-	ret := new(Image)
+	ret := AquireImage()
 	ret.VipsImage, err = NewVipsImage(buf, o)
 	if err != nil {
 		return nil, err
 	}
 	return ret, nil
+}
+
+func ResetImage(i interface{}) error {
+	img, ok := i.(*Image)
+	if !ok {
+		return errors.New("illegal object sent to ResetVipsImage")
+	}
+	img.Reset()
+	return nil
+}
+
+func AquireImage() *Image {
+	return ImagePool.Get().(*Image)
+}
+
+var ImagePool = refcount.NewReferenceCountedPool(
+	func(counter refcount.ReferenceCounter) refcount.ReferenceCountable {
+		vimgImageBuffer.With(prometheus.Labels{"action":"new", "type":"image"}).Inc()
+		i := new(Image)
+		i.ReferenceCounter = counter
+		return i
+	}, ResetImage)
+
+func (img *Image) Reset() {
+	img.VipsImage.DecrementReferenceCount()
+	img.VipsImage = nil
+	//img.VipsImage.Reset()
 }
 
 func (i *Image) SetOptions(o Options)  {
@@ -64,14 +96,14 @@ func (i *Image) SmartCrop(width, height int) error {
 
 // Extract area from the by X/Y axis in the current image.
 func (i *Image) Extract(top, left, width, height int) error {
-	i.VipsImage.Options.AreaWidth = width
-	i.VipsImage.Options.AreaHeight = height
+	i.VipsImage.Options.Extract.Width = float32(width)
+	i.VipsImage.Options.Extract.Height = float32(height)
 	if top == 0 && left == 0 {
-		i.VipsImage.Options.Top = -1
+		i.VipsImage.Options.Extract.Top = -1
 	} else {
-		i.VipsImage.Options.Top = top
+		i.VipsImage.Options.Extract.Top = float32(top)
 	}
-	i.VipsImage.Options.Left = left
+	i.VipsImage.Options.Extract.Left = float32(left)
 	
 	return i.Process()
 }
@@ -263,4 +295,10 @@ func (i *Image) Image() *[]byte {
 // Length returns the size in bytes of the image buffer.
 func (i *Image) Length() int {
 	return len(*i.GetBuffer())
+}
+
+// Gamma returns the gamma filtered image buffer.
+func (i *Image) Gamma(exponent float64) error {
+	i.VipsImage.Options.Gamma = exponent
+	return i.Process()
 }

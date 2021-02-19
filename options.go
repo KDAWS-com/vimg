@@ -30,6 +30,30 @@ const (
 	// GravitySmart enables libvips Smart Crop algorithm for image gravity orientation.
 	GravitySmart
 )
+var gravityToID = map[string]Gravity {
+	"north": GravityNorth,
+	"south": GravitySouth,
+	"east": GravityEast,
+	"west": GravityWest,
+	"smart": GravitySmart,
+}
+
+type Position int
+const (
+	PositionCentre Position = iota
+	PositionLeft
+	PositionRight
+	PositionTop
+	PositionBottom
+)
+var positions = map[string]Position {
+	"centre": PositionCentre,
+	"left": PositionLeft,
+	"right": PositionRight,
+	"top": PositionTop,
+	"bottom": PositionBottom,
+}
+
 
 // Interpolator represents the image interpolation value.
 type Interpolator int
@@ -56,8 +80,12 @@ func (i Interpolator) String() string {
 	return interpolations[i]
 }
 
+func (i Interpolator) CString() *C.char {
+	return imageInterpolatorToCString[i]
+}
+
 // Angle represents the image rotation angle value.
-type Angle int
+type Angle float64
 
 const (
 	// D0 represents the rotation angle 0 degrees.
@@ -144,30 +172,41 @@ var WatermarkFont = "sans 10"
 
 // Color represents a traditional RGB color scheme.
 type Color struct {
-	R, G, B uint8
+	R, G, B, A uint8
 }
 
 // ColorBlack is a shortcut to black RGB color representation.
-var ColorBlack = Color{0, 0, 0}
+var ColorBlack = Color{0, 0, 0, 0}
 
 // Watermark represents the text-based watermark supported options.
 type Watermark struct {
 	Width       int
 	DPI         int
 	Margin      int
-	Opacity     float32
 	NoReplicate bool
 	Text        string
 	Font        string
 	Background  Color
+	Relative	bool
+	HOffset	    	float32
+	VOffset 		float32
+	HAlign			Position
+	VAlign			Position
+	TextAlign		int
 }
 
 // WatermarkImage represents the image-based watermark supported options.
 type WatermarkImage struct {
-	Left    int
-	Top     int
-	Buf     []byte
-	Opacity float32
+	Relative		bool
+	HOffset	    	float32
+	VOffset 		float32
+	HAlign			Position
+	VAlign			Position
+	Width			float32
+	Buf     		[]byte
+	Opacity 		float32
+	Path 			string
+	BlendMode		BlendMode
 }
 
 // GaussianBlur represents the gaussian image transformation values.
@@ -178,7 +217,7 @@ type GaussianBlur struct {
 
 // Sharpen represents the image sharp transformation options.
 type Sharpen struct {
-	Radius int
+	Sigma  float64
 	X1     float64
 	Y2     float64
 	Y3     float64
@@ -186,14 +225,18 @@ type Sharpen struct {
 	M2     float64
 }
 
+type Extract struct {
+	Height  	   	float32
+	Width	      	float32
+	Top            	float32
+	Left           	float32
+	Relative 		bool
+}
+
 // Options represents the supported image transformation options.
 type Options struct {
 	Height         	int
 	Width          	int
-	AreaHeight     	int
-	AreaWidth      	int
-	Top            	int
-	Left           	int
 	Quality        	int
 	Compression    	int
 	Zoom           	int
@@ -213,6 +256,7 @@ type Options struct {
 	MaintainAspect	bool
 	SkipICCIf		string
 	Extend         	Extend
+	Extract 		Extract
 	Rotate         	Angle
 	Background     	Color
 	Gravity        	Gravity
@@ -224,5 +268,6 @@ type Options struct {
 	GaussianBlur   	GaussianBlur
 	Sharpen        	Sharpen
 	Threshold      	float64
+	Gamma			float64
 	OutputICC      	string
 }
