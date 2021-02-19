@@ -57,7 +57,7 @@ and it's typically 4x faster than using the quickest ImageMagick and GraphicsMag
 ## Installation
 
 ```bash
-go get -u github.com/karlaustin/vimg
+go get -u github.com/kdaws-com/vimg
 ```
 
 ### libvips
@@ -72,7 +72,7 @@ If you wanna take the advantage of [OpenSlide](http://openslide.org/), simply ad
 curl -s https://raw.githubusercontent.com/h2non/vimg/master/preinstall.sh | sudo bash -s --with-openslide
 ```
 
-The [install script](https://github.com/karlaustin/vimg/blob/master/preinstall.sh) requires `curl` and `pkg-config`.
+The [install script](https://github.com/kdaws-com/vimg/blob/master/preinstall.sh) requires `curl` and `pkg-config`.
 
 ## Performance
 
@@ -89,7 +89,7 @@ Here you can see some performance test comparisons for multiple scenarios:
 import (
   "fmt"
   "os"
-  "github.com/karlaustin/vimg"
+  "github.com/kdaws-com/vimg"
 )
 ```
 
@@ -191,7 +191,7 @@ if size.Width != 1000 || size.Height != 500 {
 
 #### Custom options
 
-See [Options](https://github.com/karlaustin/vimg#Options) struct to discover all the available fields
+See [Options](https://github.com/kdaws-com/vimg#Options) struct to discover all the available fields
 
 ```go
 options := vimg.Options{
