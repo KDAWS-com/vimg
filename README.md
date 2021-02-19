@@ -2,7 +2,7 @@
 
 Small [Go](http://golang.org) package for fast high-level image processing using [libvips](https://github.com/jcupitt/libvips) via C bindings, providing a simple method based API.
 
-vimg is a fork of [vimg](https://github.com/h2non/vimg) the fluent interface is partially done away with, as VipsImage.Process() doesn't return the buffer as it's an expensive operation.  It will be added back in via explicit calls to image.GetBuffer() at some point - but it does make it much more expensive to use the fluent interface once that is done.  
+vimg is a fork of [bimg](https://github.com/h2non/bimg) the fluent interface is partially done away with, as VipsImage.Process() doesn't return the buffer as it's an expensive operation.  It will be added back in via explicit calls to image.GetBuffer() at some point - but it does make it much more expensive to use the fluent interface once that is done.  
 
 vimg is efficient.  In tests a fully instrumented (with Prometheus and pprof) HTTP server used just 170MB of RAM when processing a 1950x1300 pixel JPEG (409KB) to a 130x86 pixel WebP (3KB) at a concurrency level of 10, over 50,000 requests.
  
