@@ -705,7 +705,7 @@ func getAngle(angle Angle) Angle {
 
 func (img *VipsImage) applyGamma() error {
 	var err error
-	if o.Gamma > 0 {
+	if img.Options.Gamma > 0 {
 		err = img.vipsGamma(img.Options.Gamma)
 		if err != nil {
 			return err
