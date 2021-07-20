@@ -141,8 +141,9 @@ func (img *VipsImage) Metadata() (ImageMetadata, error) {
 		Height: int(img.Image.Ysize),
 	}
 
-	o, err := img.vipsExifIntTag(Orientation)
-	if err != nil { return ImageMetadata{}, err }
+//	o, err := img.vipsExifIntTag(Orientation)
+	o := img.vipsExifIntTag(Orientation)
+//	if err != nil { return ImageMetadata{}, err }
 
 	a, err := img.vipsHasAlpha()
 	if err != nil { return ImageMetadata{}, err }
