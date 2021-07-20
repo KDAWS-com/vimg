@@ -9,7 +9,7 @@ import "C"
 import (
 	"bytes"
 	"errors"
-	"github.com/karlaustin/refcount"
+	"github.com/KarlAustin/refcount"
 	"github.com/prometheus/client_golang/prometheus"
 	"math"
 )
