@@ -1254,13 +1254,15 @@ func (img *VipsImage) vipsDrawWatermark(o WatermarkImage) error {
 */
 
 func (img *VipsImage) vipsGamma(Gamma float64) error {
-	defer C.g_object_unref(C.gpointer(img.Image))
-
 	var image *C.VipsImage
 
 	err := C.vips_gamma_bridge(img.Image, &image, C.double(Gamma))
 	if err != 0 {
 		return catchVipsError()
+	}
+
+	if image == nil {
+		return ErrVipsImageNotValidPointer
 	}
 
 	C.g_object_unref(C.gpointer(img.Image))
