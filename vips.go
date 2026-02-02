@@ -719,6 +719,7 @@ func (img *VipsImage) vipsSave(o vipsSaveOptions) error {
 	buf := C.GoBytes(ptr, C.int(length))
 	img.Buffer = buf
 	C.g_object_unref(C.gpointer(img.Image))
+	img.Image = nil // Prevent use-after-free
 	C.g_free(C.gpointer(ptr))
 
 	return nil

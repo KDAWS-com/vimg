@@ -74,10 +74,13 @@ func (img *VipsImage) Load(buf *bytes.Buffer) error {
 }
 
 func (img *VipsImage) Reset() {
+	if img.Image != nil {
+		C.g_object_unref(C.gpointer(img.Image))
+		img.Image = nil
+	}
 	img.Buffer = nil
 	img.Type = UNKNOWN
 	img.Options = Options{}
-	img.Image = nil
 }
 
 /**
