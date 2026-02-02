@@ -6,6 +6,8 @@ package vimg
 */
 import "C"
 
+import "regexp"
+
 const (
 	// Quality defines the default JPEG quality to be used.
 	Quality = 80
@@ -254,8 +256,9 @@ type Options struct {
 	Trim           	bool
 	Lossless       	bool
 	MaintainAspect	bool
-	SkipICCIf		string
-	Extend         	Extend
+	SkipICCIf		    string
+	SkipICCIfCompiled   *regexp.Regexp `json:"-"` // Pre-compiled regex, not serialized
+	Extend         	    Extend
 	Extract 		Extract
 	Rotate         	Angle
 	Background     	Color
