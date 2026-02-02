@@ -1271,12 +1271,18 @@ func (img *VipsImage) vipsGamma(Gamma float64) error {
 	return nil
 }
 
+// P2 Fix #017: Free C strings to prevent memory leaks (~30 leaks per image with EXIF)
 func (img *VipsImage) vipsExifStringTag(tag string) string {
-	return vipsExifShort(C.GoString(C.vips_exif_tag(img.Image, C.CString(tag))))
+	cTag := C.CString(tag)
+	defer C.free(unsafe.Pointer(cTag))
+	return vipsExifShort(C.GoString(C.vips_exif_tag(img.Image, cTag)))
 }
 
+// P2 Fix #017: Free C strings to prevent memory leaks
 func (img *VipsImage) vipsExifIntTag(tag string) int {
-	return int(C.vips_exif_tag_to_int(img.Image, C.CString(tag)))
+	cTag := C.CString(tag)
+	defer C.free(unsafe.Pointer(cTag))
+	return int(C.vips_exif_tag_to_int(img.Image, cTag))
 }
 
 func vipsExifShort(s string) string {
