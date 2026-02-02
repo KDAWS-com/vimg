@@ -165,7 +165,10 @@ func Initialize() {
 	defer m.Unlock()
 	defer runtime.UnlockOSThread()
 
-	err := C.vips_init(C.CString("vimg"))
+	// P2 Fix #013: Free CString to prevent memory leak
+	name := C.CString("vimg")
+	defer C.free(unsafe.Pointer(name))
+	err := C.vips_init(name)
 	if err != 0 {
 		panic("unable to start vips!")
 	}
