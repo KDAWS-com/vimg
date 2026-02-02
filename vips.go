@@ -165,7 +165,10 @@ func Initialize() {
 	defer m.Unlock()
 	defer runtime.UnlockOSThread()
 
-	err := C.vips_init(C.CString("vimg"))
+	// P2 Fix #013: Free CString to prevent memory leak
+	name := C.CString("vimg")
+	defer C.free(unsafe.Pointer(name))
+	err := C.vips_init(name)
 	if err != 0 {
 		panic("unable to start vips!")
 	}
@@ -716,6 +719,7 @@ func (img *VipsImage) vipsSave(o vipsSaveOptions) error {
 	buf := C.GoBytes(ptr, C.int(length))
 	img.Buffer = buf
 	C.g_object_unref(C.gpointer(img.Image))
+	img.Image = nil // Prevent use-after-free
 	C.g_free(C.gpointer(ptr))
 
 	return nil
@@ -1254,13 +1258,15 @@ func (img *VipsImage) vipsDrawWatermark(o WatermarkImage) error {
 */
 
 func (img *VipsImage) vipsGamma(Gamma float64) error {
-	defer C.g_object_unref(C.gpointer(img.Image))
-
 	var image *C.VipsImage
 
 	err := C.vips_gamma_bridge(img.Image, &image, C.double(Gamma))
 	if err != 0 {
 		return catchVipsError()
+	}
+
+	if image == nil {
+		return ErrVipsImageNotValidPointer
 	}
 
 	C.g_object_unref(C.gpointer(img.Image))
@@ -1269,12 +1275,18 @@ func (img *VipsImage) vipsGamma(Gamma float64) error {
 	return nil
 }
 
+// P2 Fix #017: Free C strings to prevent memory leaks (~30 leaks per image with EXIF)
 func (img *VipsImage) vipsExifStringTag(tag string) string {
-	return vipsExifShort(C.GoString(C.vips_exif_tag(img.Image, C.CString(tag))))
+	cTag := C.CString(tag)
+	defer C.free(unsafe.Pointer(cTag))
+	return vipsExifShort(C.GoString(C.vips_exif_tag(img.Image, cTag)))
 }
 
+// P2 Fix #017: Free C strings to prevent memory leaks
 func (img *VipsImage) vipsExifIntTag(tag string) int {
-	return int(C.vips_exif_tag_to_int(img.Image, C.CString(tag)))
+	cTag := C.CString(tag)
+	defer C.free(unsafe.Pointer(cTag))
+	return int(C.vips_exif_tag_to_int(img.Image, cTag))
 }
 
 func vipsExifShort(s string) string {

@@ -260,7 +260,10 @@ func (i *Image) GetBuffer() *[]byte {
 
 // Metadata returns the image metadata (size, alpha channel, profile, EXIF rotation).
 func (i *Image) Metadata() (ImageMetadata, error) {
-	return i.Metadata()
+	if i.VipsImage == nil {
+		return ImageMetadata{}, ErrVipsImageNotValidPointer
+	}
+	return i.VipsImage.Metadata()
 }
 
 // Interpretation gets the image interpretation type.
