@@ -27,6 +27,10 @@ const (
 	SVG
 	// MAGICK represents the libmagick compatible genetic image type.
 	MAGICK
+	// HEIF represents the HEIF/HEIC format (libvips 8.8+).
+	HEIF
+	// AVIF represents the AVIF format (libvips 8.9+).
+	AVIF
 )
 
 // ImageType represents an image type value.
@@ -119,6 +123,8 @@ var ImageTypes = map[ImageType]string{
 	PDF:    "pdf",
 	SVG:    "svg",
 	MAGICK: "magick",
+	HEIF:   "heif",
+	AVIF:   "avif",
 }
 
 var imageInterpolatorToID = map[string]Interpolator {
@@ -157,6 +163,9 @@ var imageTypeToID = map[string]ImageType {
 	"png": PNG,
 	"svg": SVG,
 	"magick": MAGICK,
+	"heif": HEIF,
+	"heic": HEIF,
+	"avif": AVIF,
 }
 
 func (i *Interpolator) UnmarshalJSON(data []byte) error {

@@ -38,7 +38,9 @@ enum types {
 	GIF,
 	PDF,
 	SVG,
-	MAGICK
+	MAGICK,
+	HEIF,
+	AVIF
 };
 
 typedef struct {
@@ -171,6 +173,9 @@ vips_type_find_bridge(int t) {
 	if (t == MAGICK) {
 		return vips_type_find("VipsOperation", "magickload");
 	}
+	if (t == HEIF || t == AVIF) {
+		return vips_type_find("VipsOperation", "heifload");
+	}
 	return 0;
 }
 
@@ -187,6 +192,9 @@ vips_type_find_save_bridge(int t) {
 	}
 	if (t == JPEG) {
 		return vips_type_find("VipsOperation", "jpegsave_buffer");
+	}
+	if (t == HEIF || t == AVIF) {
+		return vips_type_find("VipsOperation", "heifsave_buffer");
 	}
 	return 0;
 }
@@ -401,6 +409,57 @@ vips_tiffsave_bridge(VipsImage *in, void **buf, size_t *len) {
 }
 
 int
+vips_heifsave_bridge(VipsImage *in, void **buf, size_t *len, int strip, int quality, int lossless) {
+#if (VIPS_MAJOR_VERSION > 8 || (VIPS_MAJOR_VERSION == 8 && VIPS_MINOR_VERSION >= 8))
+	return vips_heifsave_buffer(in, buf, len,
+		"strip", INT_TO_GBOOLEAN(strip),
+		"Q", quality,
+		"lossless", INT_TO_GBOOLEAN(lossless),
+		NULL
+	);
+#else
+	return -1;
+#endif
+}
+
+int
+vips_avifsave_bridge(VipsImage *in, void **buf, size_t *len, int strip, int quality, int lossless, int speed) {
+#if (VIPS_MAJOR_VERSION > 8 || (VIPS_MAJOR_VERSION == 8 && VIPS_MINOR_VERSION >= 9))
+#if defined(VIPS_FOREIGN_HEIF_COMPRESSION_AV1)
+	return vips_heifsave_buffer(in, buf, len,
+		"strip", INT_TO_GBOOLEAN(strip),
+		"Q", quality,
+		"lossless", INT_TO_GBOOLEAN(lossless),
+		"compression", VIPS_FOREIGN_HEIF_COMPRESSION_AV1,
+		"speed", speed,
+		NULL
+	);
+#else
+	return -1;
+#endif
+#else
+	return -1;
+#endif
+}
+
+int
+vips_svgload_bridge(void *buf, size_t len, VipsImage **out, double dpi, double scale) {
+#if (VIPS_MAJOR_VERSION >= 8 && VIPS_MINOR_VERSION >= 3)
+	if (dpi <= 0) dpi = 72.0;
+	if (scale <= 0) scale = 1.0;
+
+	return vips_svgload_buffer(buf, len, out,
+		"access", VIPS_ACCESS_RANDOM,
+		"dpi", dpi,
+		"scale", scale,
+		NULL
+	);
+#else
+	return vips_svgload_buffer(buf, len, out, "access", VIPS_ACCESS_RANDOM, NULL);
+#endif
+}
+
+int
 vips_is_16bit (VipsInterpretation interpretation) {
 	return interpretation == VIPS_INTERPRETATION_RGB16 || interpretation == VIPS_INTERPRETATION_GREY16;
 }
@@ -447,6 +506,10 @@ vips_init_image (void *buf, size_t len, int imageType, VipsImage **out) {
 #endif
 	} else if (imageType == MAGICK) {
 		code = vips_magickload_buffer(buf, len, out, "access", VIPS_ACCESS_RANDOM, NULL);
+#endif
+#if (VIPS_MAJOR_VERSION > 8 || (VIPS_MAJOR_VERSION == 8 && VIPS_MINOR_VERSION >= 8))
+	} else if (imageType == HEIF || imageType == AVIF) {
+		code = vips_heifload_buffer(buf, len, out, "access", VIPS_ACCESS_RANDOM, NULL);
 #endif
 	}
 

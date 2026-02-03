@@ -273,4 +273,7 @@ type Options struct {
 	Threshold      	float64
 	Gamma			float64
 	OutputICC      	string
+	Speed          	int     // Encoding speed: -1=default, 0-9 (higher=faster,larger). AVIF/PNG only.
+	SvgDpi         	int     // SVG render DPI: 0=default (72), higher=more pixels
+	SvgScale       	float64 // SVG scale factor: 0=default (1.0), 2.0=double size
 }

@@ -122,6 +122,7 @@ type vipsSaveOptions struct {
 	OutputICC      string // Absolute path to the output ICC profile
 	Interpretation Interpretation
 	Progressive    bool
+	Speed          int // Encoding speed: -1=default, 0-9 (higher=faster,larger). AVIF/PNG only.
 }
 
 type vipsWatermarkOptions struct {
@@ -277,6 +278,9 @@ func VipsIsTypeSupported(t ImageType) bool {
 	if t == MAGICK {
 		return int(C.vips_type_find_bridge(C.MAGICK)) != 0
 	}
+	if t == HEIF || t == AVIF {
+		return int(C.vips_type_find_bridge(C.HEIF)) != 0
+	}
 	return false
 }
 
@@ -295,6 +299,9 @@ func VipsIsTypeSupportedSave(t ImageType) bool {
 	}
 	if t == TIFF {
 		return int(C.vips_type_find_save_bridge(C.TIFF)) != 0
+	}
+	if t == HEIF || t == AVIF {
+		return int(C.vips_type_find_save_bridge(C.HEIF)) != 0
 	}
 	return false
 }
@@ -708,6 +715,14 @@ func (img *VipsImage) vipsSave(o vipsSaveOptions) error {
 		saveErr = C.vips_pngsave_bridge(img.Image, &ptr, &length, strip, C.int(o.Compression), quality, interlace)
 	case TIFF:
 		saveErr = C.vips_tiffsave_bridge(img.Image, &ptr, &length)
+	case HEIF:
+		saveErr = C.vips_heifsave_bridge(img.Image, &ptr, &length, strip, quality, lossless)
+	case AVIF:
+		speed := C.int(o.Speed)
+		if speed < 0 {
+			speed = 4 // Default middle-ground
+		}
+		saveErr = C.vips_avifsave_bridge(img.Image, &ptr, &length, strip, quality, lossless, speed)
 	default:
 		saveErr = C.vips_jpegsave_bridge(img.Image, &ptr, &length, strip, quality, interlace)
 	}
@@ -746,6 +761,10 @@ func (img *VipsImage) getImageBuffer() ([]byte, error) {
 		err = C.vips_pngsave_bridge(img.Image, &ptr, &length, 0, 0, quality, interlace)
 	case TIFF:
 		err = C.vips_tiffsave_bridge(img.Image, &ptr, &length)
+	case HEIF:
+		err = C.vips_heifsave_bridge(img.Image, &ptr, &length, 0, quality, 0)
+	case AVIF:
+		err = C.vips_avifsave_bridge(img.Image, &ptr, &length, 0, quality, 0, 4)
 	default:
 		err = C.vips_jpegsave_bridge(img.Image, &ptr, &length, 0, quality, interlace)
 	}
@@ -1048,6 +1067,21 @@ func vipsImageType(buf []byte) ImageType {
 	}
 	if IsTypeSupported(MAGICK) && strings.HasSuffix(readImageType(buf), "MagickBuffer") {
 		return MAGICK
+	}
+
+	// HEIF/AVIF detection - ftyp box at bytes 4-7, brand at 8-11
+	if len(buf) >= 12 && buf[4] == 0x66 && buf[5] == 0x74 && buf[6] == 0x79 && buf[7] == 0x70 {
+		brand := string(buf[8:12])
+		switch brand {
+		case "heic", "heix", "hevc", "hevx", "mif1", "msf1", "MiHE", "MiHB":
+			if IsTypeSupported(HEIF) {
+				return HEIF
+			}
+		case "avif", "avis", "MA1B", "MA1A":
+			if IsTypeSupported(AVIF) {
+				return AVIF
+			}
+		}
 	}
 
 	return UNKNOWN
