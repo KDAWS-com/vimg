@@ -4,8 +4,40 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"strconv"
+	"strings"
 	"testing"
 )
+
+// vipsVersionAtLeast compares semantic versions correctly.
+// String comparison fails: "8.15.1" < "8.5.0" lexicographically because '1' < '5'
+func vipsVersionAtLeast(minVersion string) bool {
+	parseParts := func(v string) (int, int, int) {
+		parts := strings.Split(v, ".")
+		major, minor, patch := 0, 0, 0
+		if len(parts) >= 1 {
+			major, _ = strconv.Atoi(parts[0])
+		}
+		if len(parts) >= 2 {
+			minor, _ = strconv.Atoi(parts[1])
+		}
+		if len(parts) >= 3 {
+			patch, _ = strconv.Atoi(parts[2])
+		}
+		return major, minor, patch
+	}
+
+	curMaj, curMin, curPatch := parseParts(VipsVersion)
+	minMaj, minMin, minPatch := parseParts(minVersion)
+
+	if curMaj != minMaj {
+		return curMaj > minMaj
+	}
+	if curMin != minMin {
+		return curMin > minMin
+	}
+	return curPatch >= minPatch
+}
 
 func TestDeterminateImageType(t *testing.T) {
 	files := []struct {
@@ -98,7 +130,7 @@ func TestIsTypeSupportedSave(t *testing.T) {
 	}{
 		{JPEG}, {PNG}, {WEBP},
 	}
-	if VipsVersion >= "8.5.0" {
+	if vipsVersionAtLeast("8.5.0") {
 		types = append(types, struct{ name ImageType }{TIFF})
 	}
 
@@ -119,7 +151,7 @@ func TestIsTypeNameSupportedSave(t *testing.T) {
 		{"webp", true},
 		{"gif", false},
 		{"pdf", false},
-		{"tiff", VipsVersion >= "8.5.0"},
+		{"tiff", vipsVersionAtLeast("8.5.0")},
 	}
 
 	for _, n := range types {
