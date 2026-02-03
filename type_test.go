@@ -181,3 +181,56 @@ func TestAVIFSaveSupport(t *testing.T) {
 		t.Error("AVIF save should be supported when VipsIsTypeSupportedSave returns true")
 	}
 }
+
+func TestHEIFAVIFBrandDetection(t *testing.T) {
+	// Build minimal ftyp box: [size:4][ftyp:4][brand:4]
+	makeFtypBuf := func(brand string) []byte {
+		buf := make([]byte, 12)
+		copy(buf[4:8], "ftyp")
+		copy(buf[8:12], brand)
+		return buf
+	}
+
+	tests := []struct {
+		name     string
+		brand    string
+		expected ImageType
+	}{
+		// HEIF brands
+		{"heic brand", "heic", HEIF},
+		{"heix brand", "heix", HEIF},
+		{"hevc brand", "hevc", HEIF},
+		{"hevx brand", "hevx", HEIF},
+		{"mif1 brand", "mif1", HEIF},
+		{"msf1 brand", "msf1", HEIF},
+		{"MiHE brand", "MiHE", HEIF},
+		{"MiHB brand", "MiHB", HEIF},
+		// AVIF brands
+		{"avif brand", "avif", AVIF},
+		{"avis brand", "avis", AVIF},
+		{"MA1B brand", "MA1B", AVIF},
+		{"MA1A brand", "MA1A", AVIF},
+		// Unknown brands should return UNKNOWN
+		{"mp41 brand", "mp41", UNKNOWN},
+		{"isom brand", "isom", UNKNOWN},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := makeFtypBuf(tt.brand)
+			result := vipsImageType(buf)
+
+			// If format is supported, verify correct detection
+			if tt.expected != UNKNOWN && VipsIsTypeSupported(tt.expected) {
+				if result != tt.expected {
+					t.Errorf("Expected %v for brand %s, got %v", tt.expected, tt.brand, result)
+				}
+			} else if tt.expected == UNKNOWN {
+				// Unknown brands should return UNKNOWN regardless of support
+				if result != UNKNOWN {
+					t.Errorf("Expected UNKNOWN for brand %s, got %v", tt.brand, result)
+				}
+			}
+		})
+	}
+}

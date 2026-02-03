@@ -721,6 +721,8 @@ func (img *VipsImage) vipsSave(o vipsSaveOptions) error {
 		speed := C.int(o.Speed)
 		if speed < 0 {
 			speed = 4 // Default middle-ground
+		} else if speed > 9 {
+			speed = 9 // Clamp to max (valid range: 0-9)
 		}
 		saveErr = C.vips_avifsave_bridge(img.Image, &ptr, &length, strip, quality, lossless, speed)
 	default:
@@ -1062,26 +1064,36 @@ func vipsImageType(buf []byte) ImageType {
 	if IsTypeSupported(WEBP) && buf[8] == 0x57 && buf[9] == 0x45 && buf[10] == 0x42 && buf[11] == 0x50 {
 		return WEBP
 	}
+
+	// HEIF/AVIF detection - ftyp box at bytes 4-7, brand at 8-11
+	// Placed before SVG/MAGICK to avoid expensive regex and CGo calls for common mobile formats
+	// Uses zero-allocation byte comparison instead of string conversion
+	if buf[4] == 'f' && buf[5] == 't' && buf[6] == 'y' && buf[7] == 'p' {
+		b := buf[8:12]
+		// HEIF brands: heic, heix, hevc, hevx, mif1, msf1, MiHE, MiHB
+		if (b[0] == 'h' && b[1] == 'e' && b[2] == 'i' && (b[3] == 'c' || b[3] == 'x')) ||
+			(b[0] == 'h' && b[1] == 'e' && b[2] == 'v' && (b[3] == 'c' || b[3] == 'x')) ||
+			(b[0] == 'm' && b[1] == 'i' && b[2] == 'f' && b[3] == '1') ||
+			(b[0] == 'm' && b[1] == 's' && b[2] == 'f' && b[3] == '1') ||
+			(b[0] == 'M' && b[1] == 'i' && b[2] == 'H' && (b[3] == 'E' || b[3] == 'B')) {
+			if IsTypeSupported(HEIF) {
+				return HEIF
+			}
+		}
+		// AVIF brands: avif, avis, MA1B, MA1A
+		if (b[0] == 'a' && b[1] == 'v' && b[2] == 'i' && (b[3] == 'f' || b[3] == 's')) ||
+			(b[0] == 'M' && b[1] == 'A' && b[2] == '1' && (b[3] == 'B' || b[3] == 'A')) {
+			if IsTypeSupported(AVIF) {
+				return AVIF
+			}
+		}
+	}
+
 	if IsTypeSupported(SVG) && IsSVGImage(buf) {
 		return SVG
 	}
 	if IsTypeSupported(MAGICK) && strings.HasSuffix(readImageType(buf), "MagickBuffer") {
 		return MAGICK
-	}
-
-	// HEIF/AVIF detection - ftyp box at bytes 4-7, brand at 8-11
-	if len(buf) >= 12 && buf[4] == 0x66 && buf[5] == 0x74 && buf[6] == 0x79 && buf[7] == 0x70 {
-		brand := string(buf[8:12])
-		switch brand {
-		case "heic", "heix", "hevc", "hevx", "mif1", "msf1", "MiHE", "MiHB":
-			if IsTypeSupported(HEIF) {
-				return HEIF
-			}
-		case "avif", "avis", "MA1B", "MA1A":
-			if IsTypeSupported(AVIF) {
-				return AVIF
-			}
-		}
 	}
 
 	return UNKNOWN

@@ -443,23 +443,6 @@ vips_avifsave_bridge(VipsImage *in, void **buf, size_t *len, int strip, int qual
 }
 
 int
-vips_svgload_bridge(void *buf, size_t len, VipsImage **out, double dpi, double scale) {
-#if (VIPS_MAJOR_VERSION >= 8 && VIPS_MINOR_VERSION >= 3)
-	if (dpi <= 0) dpi = 72.0;
-	if (scale <= 0) scale = 1.0;
-
-	return vips_svgload_buffer(buf, len, out,
-		"access", VIPS_ACCESS_RANDOM,
-		"dpi", dpi,
-		"scale", scale,
-		NULL
-	);
-#else
-	return vips_svgload_buffer(buf, len, out, "access", VIPS_ACCESS_RANDOM, NULL);
-#endif
-}
-
-int
 vips_is_16bit (VipsInterpretation interpretation) {
 	return interpretation == VIPS_INTERPRETATION_RGB16 || interpretation == VIPS_INTERPRETATION_GREY16;
 }
