@@ -222,6 +222,7 @@ func (img *VipsImage) Save() error {
 		OutputICC:      o.OutputICC,
 		StripMetadata:  o.StripMetadata,
 		Lossless:       o.Lossless,
+		Speed:          o.Speed,
 	}
 
 	err := img.vipsSave(saveOptions)

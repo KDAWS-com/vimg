@@ -128,3 +128,56 @@ func TestIsTypeNameSupportedSave(t *testing.T) {
 		}
 	}
 }
+
+func TestHEIFSupport(t *testing.T) {
+	if !VipsIsTypeSupported(HEIF) {
+		t.Skipf("Skipping, libvips %s does not support HEIF", VipsVersion)
+	}
+
+	if !IsTypeSupported(HEIF) {
+		t.Error("HEIF should be supported when VipsIsTypeSupported returns true")
+	}
+
+	if ImageTypeName(HEIF) != "heif" {
+		t.Error("HEIF type name should be 'heif'")
+	}
+
+	// Test heic alias
+	if imageTypeToID["heic"] != HEIF {
+		t.Error("'heic' should be an alias for HEIF")
+	}
+}
+
+func TestAVIFSupport(t *testing.T) {
+	if !VipsIsTypeSupported(AVIF) {
+		t.Skipf("Skipping, libvips %s does not support AVIF", VipsVersion)
+	}
+
+	if !IsTypeSupported(AVIF) {
+		t.Error("AVIF should be supported when VipsIsTypeSupported returns true")
+	}
+
+	if ImageTypeName(AVIF) != "avif" {
+		t.Error("AVIF type name should be 'avif'")
+	}
+}
+
+func TestHEIFSaveSupport(t *testing.T) {
+	if !VipsIsTypeSupportedSave(HEIF) {
+		t.Skipf("Skipping, libvips %s does not support HEIF save", VipsVersion)
+	}
+
+	if !IsTypeSupportedSave(HEIF) {
+		t.Error("HEIF save should be supported when VipsIsTypeSupportedSave returns true")
+	}
+}
+
+func TestAVIFSaveSupport(t *testing.T) {
+	if !VipsIsTypeSupportedSave(AVIF) {
+		t.Skipf("Skipping, libvips %s does not support AVIF save", VipsVersion)
+	}
+
+	if !IsTypeSupportedSave(AVIF) {
+		t.Error("AVIF save should be supported when VipsIsTypeSupportedSave returns true")
+	}
+}
