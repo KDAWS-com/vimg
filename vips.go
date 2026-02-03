@@ -1092,8 +1092,19 @@ func vipsImageType(buf []byte) ImageType {
 	if IsTypeSupported(SVG) && IsSVGImage(buf) {
 		return SVG
 	}
-	if IsTypeSupported(MAGICK) && strings.HasSuffix(readImageType(buf), "MagickBuffer") {
-		return MAGICK
+
+	// Check for formats handled by ImageMagick or other native loaders (JP2K, etc.)
+	// readImageType returns the vips loader name, e.g. "VipsForeignLoadMagickBuffer" or "VipsForeignLoadJp2kBuffer"
+	loaderName := readImageType(buf)
+	if loaderName != "" {
+		if strings.HasSuffix(loaderName, "MagickBuffer") && IsTypeSupported(MAGICK) {
+			return MAGICK
+		}
+		// For other native loaders (jp2k, etc.), return MAGICK as the generic "other format" type
+		// This allows libvips to handle formats it supports natively that we don't explicitly detect
+		if IsTypeSupported(MAGICK) {
+			return MAGICK
+		}
 	}
 
 	return UNKNOWN
